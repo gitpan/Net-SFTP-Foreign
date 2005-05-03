@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '0.51';
+our $VERSION = '0.52';
 
 use strict;
 use warnings;
@@ -563,13 +563,13 @@ insecure connection). The security in SFTP comes through its
 integration with SSH, which provides an encrypted transport layer over
 which the SFTP commands are executed, and over which files can be
 transferred. The SFTP protocol defines a client and a server; only the
-client, not the server, is implemented in I<Net::SFTP::Foreign>.
+client, not the server, is implemented in Net::SFTP::Foreign.
 
 =head2 Net::SFTP::Foreign Vs. Net::SFTP
 
 Why should I prefer Net::SFTP::Foreign over Net::SFTP?
 
-Well, both modules have its pros and its contras:
+Well, both modules have their pros and cons:
 
 Net::SFTP::Foreign does not requiere a bunch of additional modules and
 external libraries to work, just the OpenBSD ssh client (or the
@@ -597,10 +597,10 @@ passwords for authentication, as Net::SFTP does.
 
 =head2 Net::SFTP::Foreign->new($host, %args)
 
-Opens a new SFTP connection with a remote host I<$host>, and returns a
-I<Net::SFTP::Foreign> object representing that open connection.
+Opens a new SFTP connection with a remote host C<$host>, and returns a
+Net::SFTP::Foreign object representing that open connection.
 
-I<%args> can contain:
+C<%args> can contain:
 
 =over 4
 
@@ -653,29 +653,29 @@ we die with an error message.
 
 =head2 $sftp->get($remote [, $local [, \&callback ] ])
 
-Downloads a file I<$remote> from the remote host. If I<$local>
+Downloads a file C<$remote> from the remote host. If C<$local>
 is specified, it is opened/created, and the contents of the
-remote file I<$remote> are written to I<$local>. In addition,
+remote file C<$remote> are written to C<$local>. In addition,
 its filesystem attributes (atime, mtime, permissions, etc.)
 will be set to those of the remote file.
 
-If I<get> is called in a non-void context, returns the contents
-of I<$remote> (as well as writing them to I<$local>, if I<$local>
+If C<get> is called in a non-void context, returns the contents
+of C<$remote> (as well as writing them to C<$local>, if C<$local>
 is provided.  Undef is returned on failure.
 
-I<$local> is optional. If not provided, the contents of the
-remote file I<$remote> will be either discarded, if I<get> is
-called in void context, or returned from I<get> if called in
+C<$local> is optional. If not provided, the contents of the
+remote file C<$remote> will be either discarded, if C<get> is
+called in void context, or returned from C<get> if called in
 a non-void context. Presumably, in the former case, you will
-use the callback function I<\&callback> to "do something" with
-the contents of I<$remote>.
+use the callback function C<\&callback> to "do something" with
+the contents of C<$remote>.
 
-If I<\&callback> is specified, it should be a reference to a
+If C<\&callback> is specified, it should be a reference to a
 subroutine. The subroutine will be executed at each iteration
 of the read loop (files are generally read in 8192-byte
 blocks, although this depends on the server implementation).
 The callback function will receive as arguments: a
-I<Net::SFTP::Foreign> object with an open SFTP connection; the data
+Net::SFTP::Foreign object with an open SFTP connection; the data
 read from the SFTP server; the offset from the beginning of
 the file (in bytes); and the total size of the file (in
 bytes). You can use this mechanism to provide status messages,
@@ -688,15 +688,15 @@ download progress meters, etc.:
 
 =head2 $sftp->put($local, $remote [, \&callback ])
 
-Uploads a file I<$local> from the local host to the remote
-host, and saves it as I<$remote>.
+Uploads a file C<$local> from the local host to the remote
+host, and saves it as C<$remote>.
 
-If I<\&callback> is specified, it should be a reference to a
+If C<\&callback> is specified, it should be a reference to a
 subroutine. The subroutine will be executed at each iteration
 of the write loop, directly after the data has been read from
 the local file. The callback function will receive as arguments:
-a I<Net::SFTP::Foreign> object with an open SFTP connection; the data
-read from I<$local>, generally in 8192-byte chunks;; the offset
+a Net::SFTP::Foreign object with an open SFTP connection; the data
+read from C<$local>, generally in 8192-byte chunks;; the offset
 from the beginning of the file (in bytes); and the total size
 of the file (in bytes). You can use this mechanism to provide
 status messages, upload progress meters, etc.:
@@ -710,68 +710,68 @@ Returns true on success, undef on error.
 
 =head2 $sftp->ls($remote [, $subref ])
 
-Fetches a directory listing of I<$remote>.
+Fetches a directory listing of C<$remote>.
 
-If I<$subref> is specified, for each entry in the directory,
-I<$subref> will be called and given a reference to a hash
-with three keys: I<filename>, the name of the entry in the
-directory listing; I<longname>, an entry in a "long" listing
-like C<ls -l>; and I<a>, a I<Net::SFTP::Foreign::Attributes> object,
+If C<$subref> is specified, for each entry in the directory,
+C<$subref> will be called and given a reference to a hash
+with three keys: C<filename>, the name of the entry in the
+directory listing; C<longname>, an entry in a "long" listing
+like C<ls -l>; and C<a>, a Net::SFTP::Foreign::Attributes object,
 which contains the file attributes of the entry (atime, mtime,
 permissions, etc.).
 
-If I<$subref> is not specified, returns a list of directory
+If C<$subref> is not specified, returns a list of directory
 entries, each of which is a reference to a hash as described
 in the previous paragraph.
 
 =head1 COMMAND METHODS
 
-I<Net::SFTP::Foreign> supports all of the commands listed in the SFTP
+Net::SFTP::Foreign supports all of the commands listed in the SFTP
 version 3 protocol specification. Each command is available
 for execution as a separate method, with a few exceptions:
-I<SSH_FXP_INIT>, I<SSH_FXP_VERSION>, and I<SSH_FXP_READDIR>.
+C<SSH_FXP_INIT>, C<SSH_FXP_VERSION>, and C<SSH_FXP_READDIR>.
 
 These are the available command methods:
 
 =head2 $sftp->do_open($path, $flags [, $attrs ])
 
-Sends the I<SSH_FXP_OPEN> command to open a remote file I<$path>,
+Sends the C<SSH_FXP_OPEN> command to open a remote file C<$path>,
 and returns an open handle on success. On failure returns
-I<undef>. The "open handle" is not a Perl filehandle, nor is
+C<undef>. The "open handle" is not a Perl filehandle, nor is
 it a file descriptor; it is merely a marker used to identify
 the open file between the client and the server.
 
-I<$flags> should be a bitmask of open flags, whose values can
-be obtained from I<Net::SFTP::Foreign::Constants>:
+C<$flags> should be a bitmask of open flags, whose values can
+be obtained from Net::SFTP::Foreign::Constants:
 
     use Net::SFTP::Foreign::Constants qw( :flags );
 
-I<$attrs> should be a I<Net::SFTP::Foreign::Attributes> object,
-specifying the initial attributes for the file I<$path>. If
-you're opening the file for reading only, I<$attrs> can be
+C<$attrs> should be a Net::SFTP::Foreign::Attributes object,
+specifying the initial attributes for the file C<$path>. If
+you're opening the file for reading only, C<$attrs> can be
 left blank, in which case it will be initialized to an
 empty set of attributes.
 
 =head2 $sftp->do_read($handle, $offset, $copy_size)
 
-Sends the I<SSH_FXP_READ> command to read from an open file
-handle I<$handle>, starting at I<$offset>, and reading at most
-I<$copy_size> bytes.
+Sends the C<SSH_FXP_READ> command to read from an open file
+handle C<$handle>, starting at C<$offset>, and reading at most
+C<$copy_size> bytes.
 
 Returns a two-element list consisting of the data read from
 the SFTP server in the first slot, and the status code (if any)
 in the second. In the case of a successful read, the status code
-will be I<undef>, and the data will be defined and true. In the
-case of EOF, the status code will be I<SSH2_FX_EOF>, and the
-data will be I<undef>. And in the case of an error in the read,
+will be C<undef>, and the data will be defined and true. In the
+case of EOF, the status code will be C<SSH2_FX_EOF>, and the
+data will be C<undef>. And in the case of an error in the read,
 a warning will be emitted, the status code will contain the
-error code, and the data will be I<undef>.
+error code, and the data will be C<undef>.
 
 =head2 $sftp->do_write($handle, $offset, $data)
 
-Sends the I<SSH_FXP_WRITE> command to write to an open file handle
-I<$handle>, starting at I<$offset>, and where the data to be
-written is in I<$data>.
+Sends the C<SSH_FXP_WRITE> command to write to an open file handle
+C<$handle>, starting at C<$offset>, and where the data to be
+written is in C<$data>.
 
 Returns the status code. On a successful write, the status code
 will be equal to SSH2_FX_OK; in the case of an unsuccessful
@@ -780,15 +780,15 @@ contain the error returned from the server.
 
 =head2 $sftp->do_close($handle)
 
-Sends the I<SSH_FXP_CLOSE> command to close either an open
-file or open directory, identified by I<$handle> (the handle
-returned from either I<do_open> or I<do_opendir>).
+Sends the C<SSH_FXP_CLOSE> command to close either an open
+file or open directory, identified by C<$handle> (the handle
+returned from either C<do_open> or C<do_opendir>).
 
-Emits a warning if the I<CLOSE> fails.
+Emits a warning if the C<CLOSE> fails.
 
 Returns the status code for the operation. To turn the
 status code into a text message, take a look at the C<fx2txt>
-function in I<Net::SFTP::Foreign::Util>.
+function in Net::SFTP::Foreign::Util.
 
 =head2 $sftp->do_lstat($path)
 
@@ -797,20 +797,20 @@ function in I<Net::SFTP::Foreign::Util>.
 =head2 $sftp->do_stat($path)
 
 These three methods all perform similar functionality: they
-run a I<stat> on a remote file and return the results in a
-I<Net::SFTP::Foreign::Attributes> object on success.
+run a C<stat> on a remote file and return the results in a
+Net::SFTP::Foreign::Attributes object on success.
 
-On failure, all three methods return I<undef>, and emit a
+On failure, all three methods return C<undef>, and emit a
 warning.
 
-I<do_lstat> sends a I<SSH_FXP_LSTAT> command to obtain file
-attributes for a named file I<$path>. I<do_stat> sends a
-I<SSH_FXP_STAT> command, and differs from I<do_lstat> only
-in that I<do_stat> follows symbolic links on the server,
-whereas I<do_lstat> does not follow symbolic links.
+C<do_lstat> sends a C<SSH_FXP_LSTAT> command to obtain file
+attributes for a named file C<$path>. C<do_stat> sends a
+C<SSH_FXP_STAT> command, and differs from C<do_lstat> only
+in that C<do_stat> follows symbolic links on the server,
+whereas C<do_lstat> does not follow symbolic links.
 
-I<do_fstat> sends a I<SSH_FXP_FSTAT> command to obtain file
-attributes for an open file handle I<$handle>.
+C<do_fstat> sends a C<SSH_FXP_FSTAT> command to obtain file
+attributes for an open file handle C<$handle>.
 
 =head2 $sftp->do_setstat($path, $attrs)
 
@@ -818,76 +818,76 @@ attributes for an open file handle I<$handle>.
 
 These two methods both perform similar functionality: they
 set the file attributes of a remote file. In both cases
-I<$attrs> should be a I<Net::SFTP::Foreign::Attributes> object.
+C<$attrs> should be a Net::SFTP::Foreign::Attributes object.
 
-I<do_setstat> sends a I<SSH_FXP_SETSTAT> command to set file
-attributes for a remote named file I<$path> to I<$attrs>.
+C<do_setstat> sends a C<SSH_FXP_SETSTAT> command to set file
+attributes for a remote named file C<$path> to C<$attrs>.
 
-I<do_fsetstat> sends a I<SSH_FXP_FSETSTAT> command to set the
-attributes of an open file handle I<$handle> to I<$attrs>.
+C<do_fsetstat> sends a C<SSH_FXP_FSETSTAT> command to set the
+attributes of an open file handle C<$handle> to C<$attrs>.
 
 Both methods emit a warning if the operation failes, and
 both return the status code for the operation. To turn the
 status code into a text message, take a look at the C<fx2txt>
-function in I<Net::SFTP::Foreign::Util>.
+function in Net::SFTP::Foreign::Util.
 
 =head2 $sftp->do_opendir($path)
 
-Sends a I<SSH_FXP_OPENDIR> command to open the remote
-directory I<$path>, and returns an open handle on success.
-On failure returns I<undef>.
+Sends a C<SSH_FXP_OPENDIR> command to open the remote
+directory C<$path>, and returns an open handle on success.
+On failure returns C<undef>.
 
 =head2 $sftp->do_remove($path)
 
-Sends a I<SSH_FXP_REMOVE> command to remove the remote file
-I<$path>.
+Sends a C<SSH_FXP_REMOVE> command to remove the remote file
+C<$path>.
 
 Emits a warning if the operation fails.
 
 Returns the status code for the operation. To turn the
 status code into a text message, take a look at the C<fx2txt>
-function in I<Net::SFTP::Foreign::Util>.
+function in Net::SFTP::Foreign::Util.
 
 =head2 $sftp->do_mkdir($path, $attrs)
 
-Sends a I<SSH_FXP_MKDIR> command to create a remote directory
-I<$path> whose attributes should be initialized to I<$attrs>,
-a I<Net::SFTP::Foreign::Attributes> object.
+Sends a C<SSH_FXP_MKDIR> command to create a remote directory
+C<$path> whose attributes should be initialized to C<$attrs>,
+a Net::SFTP::Foreign::Attributes object.
 
 Emits a warning if the operation fails.
 
 Returns the status code for the operation. To turn the
 status code into a text message, take a look at the C<fx2txt>
-function in I<Net::SFTP::Foreign::Util>.
+function in Net::SFTP::Foreign::Util.
 
 =head2 $sftp->do_rmdir($path)
 
-Sends a I<SSH_FXP_RMDIR> command to remove a remote directory
-I<$path>.
+Sends a C<SSH_FXP_RMDIR> command to remove a remote directory
+C<$path>.
 
 Emits a warning if the operation fails.
 
 Returns the status code for the operation. To turn the
 status code into a text message, take a look at the C<fx2txt>
-function in I<Net::SFTP::Foreign::Util>.
+function in Net::SFTP::Foreign::Util.
 
 =head2 $sftp->do_realpath($path)
 
-Sends a I<SSH_FXP_REALPATH> command to canonicalise I<$path>
+Sends a C<SSH_FXP_REALPATH> command to canonicalise C<$path>
 to an absolute path. This can be useful for turning paths
-containing I<'..'> into absolute paths.
+containing C<'..'> into absolute paths.
 
-Returns the absolute path on success, I<undef> on failure.
+Returns the absolute path on success, C<undef> on failure.
 
 =head2 $sftp->do_rename($old, $new)
 
-Sends a I<SSH_FXP_RENAME> command to rename I<$old> to I<$new>.
+Sends a C<SSH_FXP_RENAME> command to rename C<$old> to C<$new>.
 
 Emits a warning if the operation fails.
 
 Returns the status code for the operation. To turn the
 status code into a text message, take a look at the C<fx2txt>
-function in I<Net::SFTP::Foreign::Util>.
+function in Net::SFTP::Foreign::Util.
 
 =head1 BUGS
 

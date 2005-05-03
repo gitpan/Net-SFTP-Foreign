@@ -1,5 +1,8 @@
 Revision history for Net::SFTP::Foreign
 
+0.52  May 03, 2005
+	- some typos corrected on the docs.
+	
 0.51  May 03, 2005
 	- Net::SFTP::Foreign::Buffer reimplemented from scratch. It
 	  doesn't depend on Net::SSH::Perl::Buffer anymore.
