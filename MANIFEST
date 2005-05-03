@@ -1,0 +1,13 @@
+Changes
+eg/psftp
+lib/Net/SFTP/Foreign.pm
+lib/Net/SFTP/Foreign/Attributes.pm
+lib/Net/SFTP/Foreign/Buffer.pm
+lib/Net/SFTP/Foreign/Constants.pm
+lib/Net/SFTP/Foreign/Util.pm
+LICENSE
+Makefile.PL
+MANIFEST
+META.yml			Module meta-data (added by MakeMaker)
+README
+t/Net-SFTP-Foreign.t
