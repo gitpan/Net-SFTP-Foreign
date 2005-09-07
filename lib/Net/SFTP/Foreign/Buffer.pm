@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign::Buffer;
 
-our $VERSION = '0.51';
+our $VERSION = '0.53';
 
 use strict;
 use warnings;
@@ -40,7 +40,13 @@ sub get_int64 {
     else {
 	my ($int, $zero);
 	($zero, $int) = unpack(NN => substr(${$_[0]}, 0, 8, ''));
-	$zero==0 or croak "unsupported 64bit value in buffer";
+	if ($zero) {
+	    # too big for an integer, try to handle it as a float:
+	    my $high = $zero * 4294967296;
+	    my $result = $high + $int;
+	    return $result if ($result - $high == $int);
+	    croak "unsupported 64bit value in buffer";
+	}
 	return $int;
     }
 
@@ -66,7 +72,14 @@ sub put_int64 {
 	${$_[0]} .= pack(Q => $_[1])
     }
     else {
-	${$_[0]} .= pack(NN => 0, $_[1])
+	if ($_[1] >= 4294967296) {
+	    my $high = int ( $_[1] / 4294967296);
+	    my $low = int ($_[1] - $high * 4294967296);
+	    ${$_[0]} .= pack(NN => $high, $low)
+	}
+	else {
+	    ${$_[0]} .= pack(NN => 0, $_[1])
+	}
     }
 }
 
@@ -89,7 +102,21 @@ sub get {
 
 my %pack = ( int8 => sub { pack C => $_[0] },
 	     int32 => sub { pack N => $_[0] },
-	     int64 => sub { HAS_QUADS ? pack(Q => $_[0]) : pack(NN => 0, $_[0]) },
+	     int64 => sub {
+		 if (HAS_QUADS) {
+		     return pack(Q => $_[0])
+		 }
+		 else {
+		     if ($_[0] >= 4294967296) {
+			 my $high = int ( $_[0] / 4294967296);
+			 my $low = int ($_[0] - $high * 4294967296);
+			 return pack(NN => $high, $low)
+		     }
+		     else {
+			 return pack(NN => 0, $_[0])
+		     }
+		 }
+	     },
 	     str => sub { pack(N => length($_[0])), $_[0] },
 	     char => sub { $_[0] },
 	     attr => sub { ${$_[0]->as_buffer} } );

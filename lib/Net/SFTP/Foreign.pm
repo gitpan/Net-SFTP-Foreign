@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '0.52';
+our $VERSION = '0.53';
 
 use strict;
 use warnings;
@@ -13,7 +13,7 @@ use Net::SFTP::Foreign::Util qw( fx2txt );
 use Net::SFTP::Foreign::Attributes;
 use Net::SFTP::Foreign::Buffer;
 
-use constant COPY_SIZE => 8192;
+use constant COPY_SIZE => 32768;
 
 sub new {
     my $class = shift;
@@ -550,7 +550,7 @@ Net::SFTP::Foreign - Secure File Transfer Protocol client
 Net::SFTP::Foreign is a Perl client for the SFTP. It provides a
 subset of the commands listed in the SSH File Transfer Protocol IETF
 draft, which can be found at
-L<http://www.openssh.com/txt/draft-ietf-secsh-filexfer-00.txt>.
+L<http://www.openssh.org/txt/draft-ietf-secsh-filexfer-02.txt>.
 
 Net::SFTP::Foreign is a forked version of Net::SFTP that uses an
 external C<ssh> client (i.e. OpenSSH, L<http://www.openssh.org/>)
