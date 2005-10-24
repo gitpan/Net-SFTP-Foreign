@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '0.53';
+our $VERSION = '0.55';
 
 use strict;
 use warnings;
@@ -57,6 +57,16 @@ sub new {
     $sftp->do_init;
 
     $sftp
+}
+
+sub DESTROY {
+    my $sftp = shift;
+    if (defined $sftp->{pid}) {
+	close $sftp->{ssh_out} if defined $sftp->{ssh_out};
+	close $sftp->{ssh_in} if defined $sftp->{ssh_in};
+	kill 1, $sftp->{pid}
+	    and waitpid($sftp->{pid}, 0);
+    }
 }
 
 # call the warning handler with the object and message

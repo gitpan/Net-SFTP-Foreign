@@ -1,5 +1,8 @@
 Revision history for Net::SFTP::Foreign
 
+0.55  Oct 24 2005
+	- kill ssh process when done (bug reported by Alf Carlsson).
+
 0.54  Sep 07 2005
 	- add support for transferring files bigger than 4GB
 
