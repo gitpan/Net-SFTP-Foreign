@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '0.55';
+our $VERSION = '0.56';
 
 use strict;
 use warnings;
@@ -32,7 +32,7 @@ sub new {
 
     if (defined $opts{open2_cmd}) {
 	$opts{open2_cmd} = [$opts{open2_cmd}]
-	    unless UNIVERSAL->isa($opts{open2_cmd}, 'ARRAY');
+	    unless UNIVERSAL::isa($opts{open2_cmd}, 'ARRAY');
 	
 	for (qw(host user port ssh_cmd more)) {
 	    defined $opts{$_}

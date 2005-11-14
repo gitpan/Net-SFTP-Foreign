@@ -1,5 +1,8 @@
 Revision history for Net::SFTP::Foreign
 
+0.56  Nov 14 2005
+	- correct bug on open2_cmd option
+
 0.55  Oct 24 2005
 	- kill ssh process when done (bug reported by Alf Carlsson).
 
