@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '0.56';
+our $VERSION = '0.57';
 
 use strict;
 use warnings;
@@ -524,7 +524,7 @@ sub my_sysread {
     while ($len) {
 	my $limlen = $len < 8192 ? $len : 8192;
 	my  $br=sysread($in, $bytes, $limlen, $off);
-	unless (defined $br) {
+	unless (defined $br and $br) {
 	    $sftp->{status}=SSH2_FX_CONNECTION_LOST;
 	    croak "reading from ssh pipe failed ($!)";
 	}

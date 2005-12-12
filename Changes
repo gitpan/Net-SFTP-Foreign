@@ -1,5 +1,9 @@
 Revision history for Net::SFTP::Foreign
 
+0.57  Nov 29 2005
+	- check sysread return value when reading from pipe (bug
+	  report and patch submited by Mina Naguib).
+
 0.56  Nov 14 2005
 	- correct bug on open2_cmd option
 
