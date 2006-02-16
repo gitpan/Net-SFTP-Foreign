@@ -1,5 +1,12 @@
 Revision history for Net::SFTP::Foreign
 
+0.58  Feb 16 2006
+	- obsolete current interface, request developers to go for
+	  Net::SFTP::Foreign::Compat, or upgrado to the development
+	  version.
+	- kill ssh only on Windows machines. On Unix, just closing IO
+	  should do.
+
 0.57  Nov 29 2005
 	- check sysread return value when reading from pipe (bug
 	  report and patch submited by Mina Naguib).

@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 
-use Net::SFTP::Foreign;
+use Net::SFTP::Foreign::Compat;
 use Getopt::Long;
 
 my %opts;
@@ -18,7 +18,7 @@ $args{debug} = 1 if $opts{v};
 push @{ $args{more} }, '-C' if $opts{C};
 
 print "Connecting to $host...\n";
-my $sftp = Net::SFTP::Foreign->new($host, %args);
+my $sftp = Net::SFTP::Foreign::Compat->new($host, %args);
 
 my $shell = Net::SFTP::Foreign::Shell->new($sftp);
 $shell->shell;

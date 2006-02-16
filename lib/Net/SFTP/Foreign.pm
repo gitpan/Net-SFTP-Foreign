@@ -1,10 +1,10 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '0.57';
+our $VERSION = '0.58';
 
 use strict;
 use warnings;
-use Carp qw(carp croak );
+use Carp qw(carp croak);
 
 use IPC::Open2;
 
@@ -21,6 +21,12 @@ sub new {
     my %opts = @_;
 
     my $sftp = bless {}, $class;
+
+    delete $opts{_compat} or carp 
+	"The old API for Net::SFTP::Foreign inherited from Net::SFTP is being obsoleted. ".
+	    "Use Net::SFTP::Foreign::Compat for a package offering a mostly compatible API ".
+		"or upgrade to the development version of this package and use the new and ".
+		    "much improved API.";
 
     $sftp->{debug} = delete $opts{debug};
     $sftp->{status} = SSH2_FX_OK;
@@ -59,13 +65,19 @@ sub new {
     $sftp
 }
 
+
 sub DESTROY {
     my $sftp = shift;
     if (defined $sftp->{pid}) {
 	close $sftp->{ssh_out} if defined $sftp->{ssh_out};
 	close $sftp->{ssh_in} if defined $sftp->{ssh_in};
-	kill 1, $sftp->{pid}
-	    and waitpid($sftp->{pid}, 0);
+	if ($^O =~ /Win/) {
+	    kill 1, $sftp->{pid}
+		and waitpid($sftp->{pid}, 0);
+	}
+	else {
+	    waitpid($sftp->{pid}, 0);
+	}
     }
 }
 
@@ -550,12 +562,27 @@ Net::SFTP::Foreign - Secure File Transfer Protocol client
 
 =head1 SYNOPSIS
 
-    use Net::SFTP::Foreign;
-    my $sftp = Net::SFTP::Foreign->new($host);
+    use Net::SFTP::Foreign::Compat;
+    my $sftp = Net::SFTP::Foreign::Compat->new($host);
     $sftp->get("foo", "bar");
     $sftp->put("bar", "baz");
 
 =head1 DESCRIPTION
+
+  *** WARNING!!!
+
+  The old Net::SFTP::Foreign API inherited from the Net::SFTP package
+  is being obsolete. New versions of Net::SFTP::Foreign are going to
+  provide a new much improved but backward incompatible API.
+
+  Development versions exposing this new API are already available
+  from CPAN, they use version numbers as 0.9x_xx and so are not
+  automatically installed by the CPAN module.
+
+  If you want to continue using the old API you should change your
+  scripts to use the adaptor package Net::SFTP::Foreign::Compat
+  available from this distribution.
+
 
 Net::SFTP::Foreign is a Perl client for the SFTP. It provides a
 subset of the commands listed in the SSH File Transfer Protocol IETF
@@ -921,7 +948,7 @@ there!) developed by Benjamin Trott and Dave Rolsky.
 
 =head1 COPYRIGHT
 
-Copyright (c) 2005 Salvador FandiE<ntilde>o.
+Copyright (c) 2005, 2006 Salvador FandiE<ntilde>o.
 
 Copyright (c) 2001 Benjamin Trott, Copyright (c) 2003 David Rolsky.
 

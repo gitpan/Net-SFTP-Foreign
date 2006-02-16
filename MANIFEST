@@ -1,6 +1,7 @@
 Changes
 eg/psftp
 lib/Net/SFTP/Foreign.pm
+lib/Net/SFTP/Foreign/Compat.pm
 lib/Net/SFTP/Foreign/Attributes.pm
 lib/Net/SFTP/Foreign/Buffer.pm
 lib/Net/SFTP/Foreign/Constants.pm
