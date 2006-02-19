@@ -1,88 +1,114 @@
 package Net::SFTP::Foreign::Constants;
 
+our $VERSION = '0.90_01';
+
 use strict;
 use warnings;
 
-use vars qw( %CONSTANTS );
-%CONSTANTS = (
-    'SSH2_FXP_INIT' => 1,
-    'SSH2_FXP_VERSION' => 2,
-    'SSH2_FXP_OPEN' => 3,
-    'SSH2_FXP_CLOSE' => 4,
-    'SSH2_FXP_READ' => 5,
-    'SSH2_FXP_WRITE' => 6,
-    'SSH2_FXP_LSTAT' => 7,
-    'SSH2_FXP_FSTAT' => 8,
-    'SSH2_FXP_SETSTAT' => 9,
-    'SSH2_FXP_FSETSTAT' => 10,
-    'SSH2_FXP_OPENDIR' => 11,
-    'SSH2_FXP_READDIR' => 12,
-    'SSH2_FXP_REMOVE' => 13,
-    'SSH2_FXP_MKDIR' => 14,
-    'SSH2_FXP_RMDIR' => 15,
-    'SSH2_FXP_REALPATH' => 16,
-    'SSH2_FXP_STAT' => 17,
-    'SSH2_FXP_RENAME' => 18,
-    'SSH2_FXP_STATUS' => 101,
-    'SSH2_FXP_HANDLE' => 102,
-    'SSH2_FXP_DATA' => 103,
-    'SSH2_FXP_NAME' => 104,
-    'SSH2_FXP_ATTRS' => 105,
+use Carp;
 
-    'SSH2_FXF_READ' => 0x01,
-    'SSH2_FXF_WRITE' => 0x02,
-    'SSH2_FXF_APPEND' => 0x04,
-    'SSH2_FXF_CREAT' => 0x08,
-    'SSH2_FXF_TRUNC' => 0x10,
-    'SSH2_FXF_EXCL' => 0x20,
+require Exporter;
+our @ISA = qw(Exporter);
+our (@EXPORT_OK, %EXPORT_TAGS);
 
-    'SSH2_FX_OK' => 0,
-    'SSH2_FX_EOF' => 1,
-    'SSH2_FX_NO_SUCH_FILE' => 2,
-    'SSH2_FX_PERMISSION_DENIED' => 3,
-    'SSH2_FX_FAILURE' => 4,
-    'SSH2_FX_BAD_MESSAGE' => 5,
-    'SSH2_FX_NO_CONNECTION' => 6,
-    'SSH2_FX_CONNECTION_LOST' => 7,
-    'SSH2_FX_OP_UNSUPPORTED' => 8,
+BEGIN {
+    my %constants = ( SSH2_FXP_INIT => 1,
+		      SSH2_FXP_VERSION => 2,
+		      SSH2_FXP_OPEN => 3,
+		      SSH2_FXP_CLOSE => 4,
+		      SSH2_FXP_READ => 5,
+		      SSH2_FXP_WRITE => 6,
+		      SSH2_FXP_LSTAT => 7,
+		      SSH2_FXP_FSTAT => 8,
+		      SSH2_FXP_SETSTAT => 9,
+		      SSH2_FXP_FSETSTAT => 10,
+		      SSH2_FXP_OPENDIR => 11,
+		      SSH2_FXP_READDIR => 12,
+		      SSH2_FXP_REMOVE => 13,
+		      SSH2_FXP_MKDIR => 14,
+		      SSH2_FXP_RMDIR => 15,
+		      SSH2_FXP_REALPATH => 16,
+		      SSH2_FXP_STAT => 17,
+		      SSH2_FXP_RENAME => 18,
+		      SSH2_FXP_STATUS => 101,
+		      SSH2_FXP_HANDLE => 102,
+		      SSH2_FXP_DATA => 103,
+		      SSH2_FXP_NAME => 104,
+		      SSH2_FXP_ATTRS => 105,
 
-    'SSH2_FILEXFER_ATTR_SIZE' => 0x01,
-    'SSH2_FILEXFER_ATTR_UIDGID' => 0x02,
-    'SSH2_FILEXFER_ATTR_PERMISSIONS' => 0x04,
-    'SSH2_FILEXFER_ATTR_ACMODTIME' => 0x08,
-    'SSH2_FILEXFER_ATTR_EXTENDED' => 0x80000000,
+		      SSH2_FXF_READ => 0x01,
+		      SSH2_FXF_WRITE => 0x02,
+		      SSH2_FXF_APPEND => 0x04,
+		      SSH2_FXF_CREAT => 0x08,
+		      SSH2_FXF_TRUNC => 0x10,
+		      SSH2_FXF_EXCL => 0x20,
 
-    'SSH2_FILEXFER_VERSION' => 3,
-);
+		      SSH2_FX_OK => 0,
+		      SSH2_FX_EOF => 1,
+		      SSH2_FX_NO_SUCH_FILE => 2,
+		      SSH2_FX_PERMISSION_DENIED => 3,
+		      SSH2_FX_FAILURE => 4,
+		      SSH2_FX_BAD_MESSAGE => 5,
+		      SSH2_FX_NO_CONNECTION => 6,
+		      SSH2_FX_CONNECTION_LOST => 7,
+		      SSH2_FX_OP_UNSUPPORTED => 8,
 
-use vars qw( %TAGS );
-my %RULES = (
-    '^SSH2_FXP'    => 'fxp',
-    '^SSH2_FXF'    => 'flags',
-    '^SSH2_FILEXFER_ATTR' => 'att',
-    '^SSH2_FX_' => 'status',
-);
+		      SSH2_FILEXFER_ATTR_SIZE => 0x01,
+		      SSH2_FILEXFER_ATTR_UIDGID => 0x02,
+		      SSH2_FILEXFER_ATTR_PERMISSIONS => 0x04,
+		      SSH2_FILEXFER_ATTR_ACMODTIME => 0x08,
+		      SSH2_FILEXFER_ATTR_EXTENDED => 0x80000000,
 
-for my $re (keys %RULES) {
-    @{ $TAGS{ $RULES{$re} } } = grep /$re/, keys %CONSTANTS;
-}
+		      SSH2_FILEXFER_VERSION => 3,
 
-sub import {
-    my $class = shift;
+		      SFTP_ERR_REMOTE_STAT_FAILED => 1,
+		      SFTP_ERR_REMOTE_OPEN_FAILED => 2,
+		      SFTP_ERR_LOCAL_ALREADY_EXISTS => 3,
+		      SFTP_ERR_LOCAL_OPEN_FAILED => 4,
+		      SFTP_ERR_REMOTE_READ_FAILED => 5,
+		      SFTP_ERR_REMOTE_BLOCK_TOO_SMALL => 6,
+		      SFTP_ERR_LOCAL_WRITE_FAILED => 7,
+		      SFTP_ERR_REMOTE_BAD_PERMISSIONS => 8,
+		      SFTP_ERR_LOCAL_CHMOD_FAILED => 9,
+		      SFTP_ERR_REMOTE_BAD_TIME => 10,
+		      SFTP_ERR_LOCAL_UTIME_FAILED => 11,
+		      SFTP_ERR_REMOTE_BAD_PACKET_TYPE => 12,
+		      SFTP_ERR_REMOTE_BAD_PACKET_SEQUENCE => 13,
+		      SFTP_ERR_REMOTE_REALPATH_FAILED => 14,
+		      SFTP_ERR_REMOTE_OPENDIR_FAILED => 15,
+		      SFTP_ERR_REMOTE_WRITE_FAILED => 16,
+		      SFTP_ERR_REMOTE_RENAME_FAILED => 17,
+		      SFTP_ERR_REMOTE_LSTAT_FAILED => 18,
+		      SFTP_ERR_REMOTE_FSTAT_FAILED => 19,
+		      SFTP_ERR_REMOTE_CLOSE_FAILED => 20,
+		      SFTP_ERR_REMOTE_REMOVE_FAILED => 21,
+		      SFTP_ERR_REMOTE_MKDIR_FAILED => 22,
+		      SFTP_ERR_REMOTE_RMDIR_FAILED => 23,
+		      SFTP_ERR_REMOTE_SETSTAT_FAILED => 24,
+		      SFTP_ERR_REMOTE_FSETSTAT_FAILED => 25,
+		      SFTP_ERR_LOCAL_OPEN_FAILED => 26,
+		      SFTP_ERR_LOCAL_STAT_FAILED => 27,
+		      SFTP_ERR_LOCAL_READ_ERROR => 28,
+		      SFTP_ERR_REMOTE_READDIR_FAILED => 29,
+		);
 
-    my @to_export;
-    my @args = @_;
-    for my $item (@args) {
-        push @to_export,
-            $item =~ s/^:// ? @{ $TAGS{$item} } : $item;
+    for my $key (keys %constants) {
+	no strict 'refs';
+	my $value = $constants{$key};
+        *{$key} = sub () { $value }
     }
 
-    no strict 'refs';
-    my $pkg = caller;
-    for my $con (@to_export) {
-        warn __PACKAGE__, " does not export the constant '$con'"
-            unless exists $CONSTANTS{$con};
-        *{"${pkg}::$con"} = sub () { $CONSTANTS{$con} }
+    @EXPORT_OK = keys %constants;
+
+    my %etagre = qw( fxp SSH2_FXP
+		     flags SSH2_FXF
+		     att SSH2_FILEXFER_ATTR
+		     status SSH2_FX_ 
+		     error SFTP_ERR );
+
+    for my $key (keys %etagre) {
+	my $re = qr/^$etagre{$key}/;
+	$EXPORT_TAGS{$key} = [grep $_=~$re, @EXPORT_OK];
     }
 }
 
