@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign::Constants;
 
-our $VERSION = '0.90_01';
+our $VERSION = '0.90_02';
 
 use strict;
 use warnings;
@@ -126,16 +126,16 @@ Net::SFTP::Foreign::Constants - Exportable SFTP::Foreign constants
 
 =head1 DESCRIPTION
 
-I<Net::SFTP::Foreign::Constants> provides a list of exportable SFTP::Foreign
-constants: for SFTP::Foreign messages and commands, for file-open flags,
+I<Net::SFTP::Foreign::Constants> provides a list of exportable SFTP
+constants: for SFTP messages and commands, for file-open flags,
 for status messages, etc. Constants can be exported individually,
 or in sets identified by tag names.
 
-I<Net::SFTP::Foreign::Constants> provides values for all of the constants
-listed in the SFTP::Foreign protocol version 3 draft; the only thing to
-note is that the constants are listed with the prefix I<SSH2>
-instead of I<SSH>. So, for example, to import the constant for
-the file-open command, you would write:
+I<Net::SFTP::Foreign::Constants> provides values for all of the
+constants listed in the SFTP protocol version 3 draft; the only thing
+to note is that the constants are listed with the prefix I<SSH2>
+instead of I<SSH>. So, for example, to import the constant for the
+file-open command, you would write:
 
     use Net::SFTP::Foreign::Constants qw( SSH2_FXP_OPEN );
 
@@ -146,34 +146,56 @@ or in sets grouped by tag names. The tag names are:
 
 =over 4
 
-=item * fxp
+=item :fxp
 
 Imports all of the I<SSH2_FXP_*> constants: these are the
 constants used in the messaging protocol.
 
-=item * flags
+=item :flags
 
 Imports all of the I<SSH2_FXF_*> constants: these are constants
 used as flags sent to the server when opening files.
 
-=item * att
+=item :att
 
 Imports all of the I<SSH2_FILEXFER_ATTR_*> constants: these are
 the constants used to construct the flag in the serialized
 attributes. The flag describes what types of file attributes
 are listed in the buffer.
 
-=item * status
+=item :status
 
 Imports all of the I<SSH2_FX_*> constants: these are constants
 returned from a server I<SSH2_FXP_STATUS> message and indicate
 the status of a particular operation.
 
+=item :error
+
+Imports all the I<SFTP_ERR_*> constants used to represent high level
+errors: C<SFTP_ERR_LOCAL_ALREADY_EXISTS>,
+C<SFTP_ERR_LOCAL_CHMOD_FAILED>, C<SFTP_ERR_LOCAL_OPEN_FAILED>,
+C<SFTP_ERR_LOCAL_READ_ERROR>, C<SFTP_ERR_LOCAL_STAT_FAILED>,
+C<SFTP_ERR_LOCAL_UTIME_FAILED>, C<SFTP_ERR_LOCAL_WRITE_FAILED>,
+C<SFTP_ERR_REMOTE_BAD_PACKET_SEQUENCE>,
+C<SFTP_ERR_REMOTE_BAD_PACKET_TYPE>,
+C<SFTP_ERR_REMOTE_BAD_PERMISSIONS>, C<SFTP_ERR_REMOTE_BAD_TIME>,
+C<SFTP_ERR_REMOTE_BLOCK_TOO_SMALL>, C<SFTP_ERR_REMOTE_CLOSE_FAILED>,
+C<SFTP_ERR_REMOTE_FSETSTAT_FAILED>, C<SFTP_ERR_REMOTE_FSTAT_FAILED>,
+C<SFTP_ERR_REMOTE_LSTAT_FAILED>, C<SFTP_ERR_REMOTE_MKDIR_FAILED>,
+C<SFTP_ERR_REMOTE_OPENDIR_FAILED>, C<SFTP_ERR_REMOTE_OPEN_FAILED>,
+C<SFTP_ERR_REMOTE_READDIR_FAILED>, C<SFTP_ERR_REMOTE_READ_FAILED>,
+C<SFTP_ERR_REMOTE_REALPATH_FAILED>, C<SFTP_ERR_REMOTE_REMOVE_FAILED>,
+C<SFTP_ERR_REMOTE_RENAME_FAILED>, C<SFTP_ERR_REMOTE_RMDIR_FAILED>,
+C<SFTP_ERR_REMOTE_SETSTAT_FAILED>, C<SFTP_ERR_REMOTE_STAT_FAILED> and
+C<SFTP_ERR_REMOTE_WRITE_FAILED>
+
+(these constants are not defined on the SFTP draft)
+
 =back
 
 There is one constant that does not fit into any of the
 tag sets: I<SSH2_FILEXFER_VERSION>, which holds the value
-of the SFTP::Foreign protocol implemented by I<Net::SFTP::Foreign>.
+of the SFTP protocol implemented by I<Net::SFTP::Foreign>.
 
 =head1 AUTHOR & COPYRIGHTS
 

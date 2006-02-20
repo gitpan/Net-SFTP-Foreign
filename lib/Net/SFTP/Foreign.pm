@@ -1,13 +1,16 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '0.90_01';
+our $VERSION = '0.90_02';
 
 use strict;
 use warnings;
 use Carp qw(carp croak );
 use Scalar::Util qw(dualvar);
-
+use Fcntl qw(:mode);
 use IPC::Open2;
+
+my $has_sk;
+BEGIN { $has_sk = eval "use Sort::Key; 1" }
 
 use Net::SFTP::Foreign::Constants qw( :fxp :flags :att
 				      :status :error
@@ -21,6 +24,69 @@ sub _debug { print STDERR @_, "\n" };
 
 our $debug;
 
+sub _next_msg_id { shift->{_msg_id}++ }
+
+sub _send_new_msg {
+    my $sftp = shift;
+    my $code = shift;
+    my $id = $sftp->_next_msg_id;
+    my $msg = Net::SFTP::Foreign::Buffer->new(int8 => $code, int32 => $id, @_);
+    $sftp->_send_msg($msg);
+    return $id;
+}
+
+sub _send_msg {
+    my ($sftp, $buf) = @_;
+    my $bytes = $buf->bytes;
+    $bytes = pack('N', length($bytes)) . $bytes;
+    my $len = length $bytes;
+    my $off = 0;
+    local $SIG{PIPE} = 'IGNORE';
+    while ($len) {
+	my $limlen = $len < 8192 ? $len : 8192;
+	my $bw = syswrite($sftp->{ssh_out}, $bytes, $limlen,  $off);
+	unless (defined $bw) {
+	    $sftp->_set_status(SSH2_FX_CONNECTION_LOST);
+	    croak "writing to ssh pipe failed ($!)";
+	}
+	$len-=$bw;
+	$off+=$bw;
+    }
+}
+
+sub _sysread {
+    my $sftp = shift;
+    my ($in, $len)=@_;
+    my $off=0;
+    my $bytes;
+    local $SIG{PIPE}='IGNORE';
+    while ($len) {
+	my $limlen = $len < 8192 ? $len : 8192;
+	my  $br=sysread($in, $bytes, $limlen, $off);
+	unless (defined $br and $br) {
+	    $sftp->_set_status(SSH2_FX_CONNECTION_LOST);
+	    croak "reading from ssh pipe failed ($!)";
+	}
+	$len-=$br;
+	$off+=$br;
+    }
+    $bytes
+}
+
+sub _get_msg {
+    my $sftp=shift;
+    my $len = unpack('N', $sftp->_sysread($sftp->{ssh_in}, 4));
+    $len > 256*1024 and croak "message too long ($len bytes)";
+    Net::SFTP::Foreign::Buffer->make($sftp->_sysread($sftp->{ssh_in}, $len));
+}
+
+sub _ensure_list {
+    my $l = shift;
+    return () unless defined $l;
+    return @$l if eval { @$l >= 0};
+    return ($l);
+}
+
 sub new {
     my $class = shift;
     unshift @_, 'host' if @_ & 1;
@@ -29,30 +95,37 @@ sub new {
     my $sftp = {_msg_id => 0};
     bless $sftp, $class;
 
-    $sftp->_set_status(SSH2_FX_OK);
+    $sftp->_set_status;
+    $sftp->_set_error;
 
-    if (defined $opts{open2_cmd}) {
-	$opts{open2_cmd} = [$opts{open2_cmd}]
-	    unless UNIVERSAL::isa($opts{open2_cmd}, 'ARRAY');
-	
-	for (qw(host user port ssh_cmd more)) {
-	    defined $opts{$_}
-		and croak("both '$_' and 'open2_cmd' options defined");
-	}
+    my @open2_cmd;
+
+    my $open2_cmd = delete $opts{open2_cmd};
+    if (defined $open2_cmd) {
+	@open2_cmd = _ensure_list($open2_cmd);
     }
     else {
-	defined $opts{host}
-	    or croak "sftp target host not defined";
+	my $host = delete $opts{host};
+	defined $host or croak "sftp target host not defined";
 
-	my @port = defined $opts{port} ? (-p => $opts{port}) : ();
-	my @user = defined $opts{user} ? (-l => $opts{user}) : ();
-	my @more = defined $opts{more} ? (UNIVERSAL::isa($opts{more}, 'ARRAY') ? @{$opts{more}} : $opts{more}) : ();
+	my $ssh_cmd = delete $opts{ssh_cmd};
+	@open2_cmd = defined $ssh_cmd ? $ssh_cmd : 'ssh';
 
-	$opts{ssh_cmd} = 'ssh' unless defined $opts{ssh_cmd};
-	$opts{open2_cmd} = [$opts{ssh_cmd}, @port, @user, @more, $opts{host}, -s => 'sftp'];
+	my $port = delete $opts{port};
+	push @open2_cmd, -p => $port if defined $port;
+
+	my $user = delete $opts{user};
+	push @open2_cmd, -l => $user if defined $user;
+
+	push @open2_cmd, _ensure_list(delete $opts{more});
+
+	push @open2_cmd, $host, -s => 'sftp';
     }
 
-    $sftp->{pid} = open2($sftp->{ssh_in}, $sftp->{ssh_out}, @{$opts{open2_cmd}})
+    croak "invalid option(s) '".join("', '", keys %opts)."' or bad combination"
+	if %opts;
+
+    $sftp->{pid} = open2($sftp->{ssh_in}, $sftp->{ssh_out}, @open2_cmd)
 	or croak "running '@_' failed ($!)";
 
     eval { $sftp->_init };
@@ -354,7 +427,6 @@ sub _close_save_state {
     undef;
 }
 
-
 ## SSH2_FXP_REALPATH (16)
 # returns realpath on success, undef on failure
 sub realpath {
@@ -399,23 +471,22 @@ sub get {
     my $cb = delete $opts{callback};
     my $umask = delete $opts{umask};
     my $perm = delete $opts{perm};
-    my $copyperm = delete $opts{copyperm};
-    my $copytime = delete $opts{copytime};
+    my $copy_perms = delete $opts{copy_perms};
+    my $copy_time = delete $opts{copy_time};
     my $overwrite = delete $opts{overwrite};
-    my $blocksize = delete $opts{blocksize} || COPY_SIZE;
-    my $queuesize = delete $opts{queuesize} || 10;
-    my $dontsave = delete $opts{dontsave};
+    my $block_size = delete $opts{block_size} || COPY_SIZE;
+    my $queue_size = delete $opts{queue_size} || 10;
+    my $dont_save = delete $opts{dont_save};
 
     my $oldumask = umask;
 
-    croak "unknown option(s) '".join("', '", keys %opts)."'"
-	if keys %opts;
+    %opts and croak "invalid option(s) '".join("', '", keys %opts)."'";
 
     croak "'perm' and 'umask' options can not be used simultaneously"
 	if (defined $perm and $umask);
 
-    croak "'perm' and 'copyperm' options can not be used simultaneously"
-	if (defined $perm and $copyperm);
+    croak "'perm' and 'copy_perms' options can not be used simultaneously"
+	if (defined $perm and $copy_perms);
 
     my $numask;
 
@@ -428,8 +499,8 @@ sub get {
     }
 
     $overwrite = 1 unless defined $overwrite;
-    $copyperm = 1 unless (defined $perm or defined $copyperm);
-    $copytime = 1 unless defined $copytime;
+    $copy_perms = 1 unless (defined $perm or defined $copy_perms);
+    $copy_time = 1 unless defined $copy_time;
 
     my $a = $sftp->stat($remote)
 	or return undef;
@@ -439,14 +510,14 @@ sub get {
     defined $handle or return undef;
 
     my $fh;
-    unless ($dontsave) {
+    unless ($dont_save) {
 	if (!$overwrite and -e $local) {
 	    $sftp->_set_error(SFTP_ERR_LOCAL_ALREADY_EXISTS,
 			     "local file $local already exists");
 	    return undef;
 	}
 	
-	if ($copyperm) {
+	if ($copy_perms) {
 	    my $aperm = $a->perm;
 	    $perm = 0666 unless defined $perm;
 	    $a->perm =~ /^(\d+)$/ or die "perm is not numeric";
@@ -484,19 +555,19 @@ sub get {
  OK: do {
 	while (1) {
 	    # request a new block if queue is not full
-	    if (!@msgid or ($size <= $askoff and @msgid < $queuesize)) {
+	    if (!@msgid or ($size <= $askoff and @msgid < $queue_size)) {
 		my $id = $sftp->_send_new_msg(SSH2_FXP_READ, str=> $handle,
-					      int64 => $askoff, int32 => $blocksize);
+					      int64 => $askoff, int32 => $block_size);
 		$debug and _debug("Sent message SSH2_FXP_READ I:$id O:$askoff");
 
 		push @msgid, $id;
 		push @askoff, $askoff;
-		$askoff += $blocksize;
+		$askoff += $block_size;
 	    }
 
 	    # if queue is not full, go sending a new request instead
 	    # of waiting for a paquet to arrive
-	    if ( $size > $askoff && @msgid < $queuesize ) {
+	    if ( $size > $askoff && @msgid < $queue_size ) {
 		my $rin = '';
 		vec ($rin, $rfno, 1) = 1;
 		next unless scalar select($rin, undef, undef, 0);
@@ -529,14 +600,14 @@ sub get {
 	    }
 
 	    $loff += $len;
-	    $askoff = $loff if $len < $blocksize;
+	    $askoff = $loff if $len < $block_size;
 
 	    if (defined $cb) {
 		$size = $loff if $loff > $size;
 		$cb->($sftp, $data, $roff, $size);
 	    }
 
-	    unless ($dontsave or print $fh $data) {
+	    unless ($dont_save or print $fh $data) {
 		$sftp->_set_error(SFTP_ERR_LOCAL_WRITE_FAILED,
 				 "unable to write data to local file $local: $!");
 		last OK;
@@ -550,7 +621,7 @@ sub get {
 
     return undef if $sftp->error;
 
-    unless ($dontsave or close $fh) {
+    unless ($dont_save or close $fh) {
 	$sftp->_set_error(SFTP_ERR_LOCAL_WRITE_FAILED,
 			  "unable to write data to local file $local: $!");
 	return undef;
@@ -559,8 +630,8 @@ sub get {
     # we can be running on taint mode, so some checks are
     # performed to untaint data from the remote side.
 
-    unless ($dontsave) {
-	if ($copytime) {
+    unless ($dont_save) {
+	if ($copy_time) {
 	    if ($a->flags & SSH2_FILEXFER_ATTR_ACMODTIME) {
 		$a->atime =~ /^(\d+)$/ or die "Bad atime from remote file $remote";
 		my $atime = int $1;
@@ -585,7 +656,7 @@ sub get_content {
     my @data;
 
     if ($sftp->get($name, undef,
-		   dontsave => 1,
+		   dont_save => 1,
 		   callback => sub { push @data, $_[1] })) {
 	return join('', @data);
     }
@@ -602,20 +673,19 @@ sub put {
 
     my $umask = delete $opts{umask};
     my $perm = delete $opts{perm};
-    my $copyperm = delete $opts{copyperm};
-    my $copytime = delete $opts{copytime};
+    my $copy_perms = delete $opts{copy_perms};
+    my $copy_time = delete $opts{copy_time};
     my $overwrite = delete $opts{overwrite};
-    my $blocksize = delete $opts{blocksize} || COPY_SIZE;
-    my $queuesize = delete $opts{queuesize} || 10;
+    my $block_size = delete $opts{block_size} || COPY_SIZE;
+    my $queue_size = delete $opts{queue_size} || 10;
 
-    croak "unknown option(s) '".join("', '", keys %opts)."'"
-	if keys %opts;
+    %opts and croak "invalid option(s) '".join("', '", keys %opts)."'";
 
     croak "'perm' and 'umask' options can not be used simultaneously"
 	if (defined $perm and $umask);
 
-    croak "'perm' and 'copyperm' options can not be used simultaneously"
-	if (defined $perm and $copyperm);
+    croak "'perm' and 'copy_perms' options can not be used simultaneously"
+	if (defined $perm and $copy_perms);
 
     my $numask;
 
@@ -627,8 +697,8 @@ sub put {
 	$numask = 0777 & ~$umask;
     }
     $overwrite = 1 unless defined $overwrite;
-    $copyperm = 1 unless (defined $perm or defined $copyperm);
-    $copytime = 1 unless defined $copytime;
+    $copy_perms = 1 unless (defined $perm or defined $copy_perms);
+    $copy_time = 1 unless defined $copy_time;
 
     my $fh;
     unless (CORE::open $fh, '<', $local) {
@@ -645,7 +715,7 @@ sub put {
 	return undef;
     }
 
-    $perm = $lmode & $numask if defined $copyperm;
+    $perm = $lmode & $numask if defined $copy_perms;
 
     my $attrs = Net::SFTP::Foreign::Attributes->new;
     $attrs->set_perm($perm);
@@ -664,8 +734,8 @@ sub put {
  OK: do {
 	my $eof;
 	while (1) {
-	    if (!$eof and @msgid < $queuesize) {
-		my $len = CORE::read $fh, my ($data), $blocksize;
+	    if (!$eof and @msgid < $queue_size) {
+		my $len = CORE::read $fh, my ($data), $block_size;
 		unless (defined $len) {
 		    $sftp->_set_error(SFTP_ERR_LOCAL_READ_ERROR,
 				     "Couldn't read from local file '$local': $!");
@@ -699,7 +769,7 @@ sub put {
 
 	    last if ($eof and !@msgid);
 
-	    if ( !$eof and @msgid < $queuesize) {
+	    if ( !$eof and @msgid < $queue_size) {
 		my $rin = '';
 		vec ($rin, $rfno, 1) = 1;
 		next unless scalar select($rin, undef, undef, 0);
@@ -723,7 +793,7 @@ sub put {
 
     return undef if $sftp->error;
 
-    if ($copytime) {
+    if ($copy_time) {
 	$attrs = Net::SFTP::Foreign::Attributes->new;
 	$attrs->set_amtime($latime, $lmtime);
 	$sftp->setstat($remote, $attrs);
@@ -732,53 +802,46 @@ sub put {
     return $sftp->{error} == 0;
 }
 
-#sub put {
-#    my $sftp = shift;
-#    my($local, $remote, $cb) = @_;
-#    my $ssh = $sftp->{ssh};
+sub _sort_entries {
+    my $e = shift;
+    if ($has_sk) {
+	&Sort::Key::keysort_inplace(sub { $_->{filename} }, $e);
+    }
+    else {
+	@$e = sort { $a->{filename} cmp $b->{filename} } @$e;
+    }
+}
 
-#    my @stat = stat $local or croak "Can't stat local $local: $!";
-#    my $size = $stat[7];
-#    my $a = Net::SFTP::Foreign::Attributes->new(Stat => \@stat);
-#    my $flags = $a->flags;
-#    $flags &= ~SSH2_FILEXFER_ATTR_SIZE;
-#    $flags &= ~SSH2_FILEXFER_ATTR_UIDGID;
-#    $a->flags($flags);
-#    $a->perm( $a->perm & 0777 );
+sub _gen_wanted {
+    my ($ow, $onw) = my ($w, $nw) = @_;
+    if (ref $w eq 'Regexp') {
+	$w = sub { $_[1]->{filename} =~ $ow }
+    }
 
-#    local *FH;
-#    open FH, $local or croak "Can't open local file $local: $!";
-#    binmode FH or croak "Can't binmode FH: $!";
+    if (ref $nw eq 'Regexp') {
+	$nw = sub { $_[1]->{filename} !~ $onw }
+    }
+    elsif (defined $nw) {
+	$nw = sub { !&$onw };
+    }
 
-#    my $handle = $sftp->open($remote, SSH2_FXF_WRITE | SSH2_FXF_CREAT |
-#	SSH2_FXF_TRUNC, $a) or return;  # check status for info
+    if (defined $w and defined $nw) {
+	return sub { &$nw and &$w }
+    }
 
-#    my $offset = 0;
-#    while (1) {
-#        my($len, $data, $msg, $id);
-#        $len = read FH, $data, COPY_SIZE;
-#        last unless $len;
-#        $cb->($sftp, $data, $offset, $size) if defined $cb;
-#        my $status = $sftp->write($handle, $offset, $data);
-#        if ($status != SSH2_FX_OK) {
-#            close FH;
-#            return;
-#        }
-#        $debug and _debug("In write loop, got $len offset $offset");
-#        $offset += $len;
-#    }
+    return $w || $nw;
+}
 
-#    close FH or $sftp->warn("Can't close local file $local: $!");
-
-#    # ignore failures here, the transmission is the important part
-#    $sftp->fsetstat($handle, $a);
-#    $sftp->close($handle);
-#    return 1;
-#}
-
-# returns ref to list of files on success, undef on failure
 sub ls {
-    my ($sftp, $remote) = @_;
+    my ($sftp, $remote, %opts) = @_;
+
+    my $ordered = delete $opts{ordered};
+
+    my $wanted = delete $opts{_wanted} ||
+	_gen_wanted(delete $opts{wanted},
+		    delete $opts{no_wanted});
+
+    %opts and croak "invalid option(s) '".join("', '", keys %opts)."'";
 
     my $handle = $sftp->opendir($remote);
     return unless defined $handle;
@@ -794,9 +857,12 @@ sub ls {
 	    my $count = $msg->get_int32 or last;
 
 	    for (1..$count) {
-		push @dir, { filename => $msg->get_str,
-			     longname => $msg->get_str,
-			     a => $msg->get_attributes };
+		my $entry =  { filename => $msg->get_str,
+			       longname => $msg->get_str,
+			       a => $msg->get_attributes };
+		if (!$wanted or $wanted->($sftp, $entry)) {
+		    push @dir, $entry;
+		}
             }
 	}
 	else {
@@ -805,64 +871,140 @@ sub ls {
 	}
     }
 
+    $sftp->_close_save_state($handle);
+
+    _sort_entries \@dir if $ordered;
+
     return $sftp->{error} == 0 ? \@dir : undef;
 }
 
-
-sub _next_msg_id { shift->{_msg_id}++ }
-
-sub _send_new_msg {
-    my $sftp = shift;
-    my $code = shift;
-    my $id = $sftp->_next_msg_id;
-    my $msg = Net::SFTP::Foreign::Buffer->new(int8 => $code, int32 => $id, @_);
-    $sftp->_send_msg($msg);
-    return $id;
-}
-
-sub _send_msg {
-    my ($sftp, $buf) = @_;
-    my $bytes = $buf->bytes;
-    $bytes = pack('N', length($bytes)) . $bytes;
-    my $len = length $bytes;
-    my $off = 0;
-    local $SIG{PIPE} = 'IGNORE';
-    while ($len) {
-	my $limlen = $len < 8192 ? $len : 8192;
-	my $bw = syswrite($sftp->{ssh_out}, $bytes, $limlen,  $off);
-	unless (defined $bw) {
-	    $sftp->_set_status(SSH2_FX_CONNECTION_LOST);
-	    croak "writing to ssh pipe failed ($!)";
-	}
-	$len-=$bw;
-	$off+=$bw;
+sub _call_on_error {
+    my ($sftp, $on_error, $entry) = @_;
+    if ($on_error and $sftp->error) {
+	$on_error->($sftp, $entry);
+	$sftp->_set_error;
+	$sftp->_set_status;
     }
 }
 
-sub _sysread {
-    my $sftp = shift;
-    my ($in, $len)=@_;
-    my $off=0;
-    my $bytes;
-    local $SIG{PIPE}='IGNORE';
-    while ($len) {
-	my $limlen = $len < 8192 ? $len : 8192;
-	my  $br=sysread($in, $bytes, $limlen, $off);
-	unless (defined $br and $br) {
-	    $sftp->_set_status(SSH2_FX_CONNECTION_LOST);
-	    croak "reading from ssh pipe failed ($!)";
-	}
-	$len-=$br;
-	$off+=$br;
-    }
-    $bytes
-}
+# this method code is a little convoluted because we are trying to
+# keep in memory as few entries as possible!!!
 
-sub _get_msg {
-    my $sftp=shift;
-    my $len = unpack('N', $sftp->_sysread($sftp->{ssh_in}, 4));
-    $len > 256*1024 and croak "message too long ($len bytes)";
-    Net::SFTP::Foreign::Buffer->make($sftp->_sysread($sftp->{ssh_in}, $len));
+sub find {
+    my ($sftp, $dirs, %opts) = @_;
+
+    $sftp->_set_error;
+    $sftp->_set_status;
+
+    my $follow_links = delete $opts{follow_links};
+    my $on_error = delete $opts{on_error};
+    my $realpath = delete $opts{realpath};
+    my $ordered = delete $opts{ordered};
+    my $wanted = _gen_wanted( delete $opts{wanted},
+			      delete $opts{no_wanted} );
+    my $descend = _gen_wanted( delete $opts{descend},
+			       delete $opts{no_descend} );
+
+    %opts and croak "invalid option(s) '".join("', '", keys %opts)."'";
+
+    my $wantarray = wantarray;
+    my (@res, $res);
+    my %done;
+    my %rpdone;
+
+    my @dirs = _ensure_list $dirs;
+    my @queue = map { { filename => $_ } } ($ordered ? sort @dirs : @dirs);
+
+    my $try;
+    while (@queue) {
+	no warnings 'uninitialized';
+	$try = shift @queue;
+	my $fn = $try->{filename};
+	next if $done{$fn}++;
+
+	my $a = $try->{a} || $sftp->lstat($fn)
+	    or next;
+
+	my $task = sub {
+	    my $entry = shift;
+	    my $fn = $entry->{filename};
+	    for (1) {
+		my $follow = $follow_links and S_ISLNK($entry->{a}->perm);
+		
+		if ($follow or $realpath) {
+		    unless (defined $entry->{realpath}) {
+			my $rp = $entry->{realpath} = $sftp->realpath($fn)
+			    or next;
+			$rpdone{$rp}++ and next;
+		    }
+		}
+		
+		if ($follow) {
+		    $entry->{a} = $sftp->stat($fn)
+			or next;
+		    unshift @queue, $entry;
+		    next;
+		}
+		
+		if (!$wanted or $wanted->($sftp, $entry)) {
+		    if ($wantarray) {
+			push @res, $entry;
+		    }
+		    else {
+			$res++;
+		    }
+		}
+
+	    }
+	    continue {
+		$sftp->_call_on_error($on_error, $entry)
+	    }
+	};
+
+	$task->($try);
+
+	if (S_ISDIR($a->perm)) {
+	    if (!$descend or $descend->($sftp, $try)) {
+		if ($ordered) {
+		    my $ls = $sftp->ls( $fn,
+					ordered => 1,
+					_wanted => sub {
+					    my $child = $_[1]->{filename};
+					    if ($child !~ /^\.\.?$/) {
+						$_[1]->{filename} = "$fn/$child";
+						return 1;
+					    }
+					    undef;
+					})
+			or next;
+		    unshift @queue, @$ls;
+		}
+		else {
+		    $sftp->ls( $fn,
+			       _wanted => sub {
+				   my $entry = $_[1];
+				   my $child = $entry->{filename};
+				   if ($child !~ /^\.\.?$/) {
+				       $entry->{filename} = "$fn/$child";
+
+				       if (S_ISDIR($entry->{a}->perm)) {
+					   push @queue, $entry;
+				       }
+				       else {
+					   $task->($entry);
+				       }
+				   }
+				   undef } )
+			or next;
+		}
+	    }
+	}
+    }
+    continue {
+	$sftp->_call_on_error($on_error, $try)
+    }
+
+    return wantarray ? @res : $res;
 }
 
 1;
@@ -890,25 +1032,23 @@ transferring files between machines over a secure, encrypted
 connection (as opposed to regular FTP, which functions over an
 insecure connection). The security in SFTP comes through its
 integration with SSH, which provides an encrypted transport layer over
-which the SFTP commands are executed, and over which files can be
-transferred.
+which the SFTP commands are executed.
 
 Net::SFTP::Foreign is a Perl client for the SFTP. It provides a subset
 of the commands listed in the SSH File Transfer Protocol IETF draft,
 which can be found at
-L<http://www.openssh.org/txt/draft-ietf-secsh-filexfer-02.txt> (and
-also included on this package distribution, on the C<rfc> directory).
+L<http://www.openssh.org/txt/draft-ietf-secsh-filexfer-02.txt> (also
+included on this package distribution, on the C<rfc> directory).
 
-Net::SFTP::Foreign uses the ssh command to stablish the secure
-connection to the remote server and talk the sftp protocol on top of
-it.
+Net::SFTP::Foreign uses any compatible C<ssh> command installed on
+your system (for instance, OpenSSH) to establish the secure connection
+to the remote server.
 
 Formelly Net::SFTP::Foreign was a hacked version of Net::SFTP, but
-from version 0.90 is has been almost completelly rewritten from
-scratch and a new much improved and incompatible API introduced (the
-adaptor module Net::SFTP::Foreign::Compat is also provided for
+from version 0.90 it has been almost completelly rewritten from
+scratch and a new much improved and incompatible API introduced (an
+adaptor module, Net::SFTP::Foreign::Compat, is also provided for
 backward compatibility).
-
 
 
 =head2 Net::SFTP::Foreign Vs. Net::SFTP
@@ -918,40 +1058,42 @@ Why should I prefer Net::SFTP::Foreign over Net::SFTP?
 Well, both modules have their pros and cons:
 
 Net::SFTP::Foreign does not requiere a bunch of additional modules and
-external libraries to work, just the OpenBSD ssh client (or the
-commercial one).
+external libraries to work, just the OpenBSD ssh client (or any other
+client compatible enough).
 
-I trust OpenSSH ssh client more than Net::SSH::Perl: there are lots of
-paranoid people ensuring that OpenSSH doesn't have security holes!
+I trust OpenSSH ssh client more than Net::SSH::Perl, there are lots of
+paranoid people ensuring that OpenSSH doesn't have security holes!!!
 
-If you have an ssh infrastructure already deployed in your
-environment, using the binary ssh client ensures a seamless
-integration with it.
+If you have an ssh infrastructure already deployed, by using the
+binary ssh client, Net::SFTP::Foreign ensures a seamless integration
+within your environment (ssh configuration files, keys, etc.).
 
 Net::SFTP::Foreign is much faster transferring files, specially over
-networks witha high (relative) latency.
+networks with high (relative) latency.
+
+Net::SFTP::Foreign provides several high level methods not available
+from Net::SFTP as for instance, C<find> or C<mirror>.
 
 On the other hand, using the external command means an additional
 proccess being launched and running, depending on your OS this could
-eat more resources than the in process pure perl implementation in
-Net::SSH::Perl used by Net::SFTP.
+eat more resources than the in process pure perl implementation
+provided by Net::SSH::Perl.
 
-Net::SFTP::Foreign supports version 2 of the ssh protocol only.
+Net::SFTP::Foreign supports version 2 of the SSH protocol only.
 
-Finally Net::SFTP::Foreign does not (and will never) allow to use
-passwords for authentication, as Net::SFTP does.
+Finally B<Net::SFTP::Foreign does not (and will never) allow to use
+passwords for authentication>. Net::SFTP does.
 
 
 =head2 USAGE
 
-Those are the methods available from this package.
+Most of the methods available from this package return undef on
+failure and a true value or the requested data on
+success. C<$sftp-E<gt>error> can be used to check explicitly for an
+error after every method call.
 
-All methods return undef on failure and a true value or the requested
-data on success. C<$sftp-E<gt>error> can be used to check explicitly for
-an error after every method call.
-
-Inside any method, a low-level network error as a broken ssh
-connection will cause the method to die.
+Inside any method, a low-level network error (for instance, a broken ssh
+connection) will cause the method to die.
 
 =over 4
 
@@ -970,9 +1112,9 @@ remote host name
 
 =item user =E<gt> $username
 
-username to use to log in to the remote server. This should
-be your SSH login, and can be empty, in which case the username
-is drawn from the user executing the process.
+username to log in to the remote server. This should be your SSH
+login, and can be empty, in which case the username is drawn from the
+user executing the process.
 
 =item port =E<gt> $portnumber
 
@@ -985,11 +1127,6 @@ additional args passed to ssh command.
 =item ssh_cmd =E<gt> $sshcmd
 
 name of the external ssh client.
-
-=item debug =E<gt> 1
-
-if set to a true value, debugging messages will be printed out. The
-default is false.
 
 =item open2_cmd =E<gt> [@cmd]
 
@@ -1011,15 +1148,15 @@ use C<eval> to catch it:
 
 The exit code for the C<ssh> command is available in C<$?>, though
 OpenSSH C<ssh> does not return meaningful codes. For debugging
-purposes you can run C<ssh> in verbose passing it the C<-v> option
-via the C<more> option.
+purposes you can run C<ssh> in verbose mode passing it the C<-v>
+option via the C<more> option.
 
   my $sftp = Net::SFTP::Foreign->new($host, more => '-v');
 
 =item $sftp-E<gt>error
 
 Returns the error code from the last executed command. The value
-returned is similar to C<$!>, when used as a string is yields the
+returned is similar to C<$!>, when used as a string it yields the
 corresponding error string.
 
 See L<Net::SFTP::Constants> for a list of possible error codes and how
@@ -1043,12 +1180,12 @@ possible):
 
 =over 4
 
-=item copytime =E<gt> $bool
+=item copy_time =E<gt> $bool
 
 determines if access and modification time attributes have to be
 copied from remote file. Default is to copy them.
 
-=item copyperms =E<gt> $bool
+=item copy_perms =E<gt> $bool
 
 determines if permision attributes have to be copied from remote
 file. Default is to copy them after applying the local process umask.
@@ -1063,7 +1200,7 @@ the copied file. Default is to use the umask for the current process.
 sets the permision mask of the file to be $perm, umask and remote
 permissions are ignored.
 
-=item blocksize =E<gt> $bytes
+=item block_size =E<gt> $bytes
 
 size of the blocks the file is being splittered on for
 transfer. Incrementing this value can improve performance but some
@@ -1102,12 +1239,12 @@ This method accepts several options:
 
 =over 4
 
-=item copytime =E<gt> $bool
+=item copy_time =E<gt> $bool
 
 determines if access and modification time attributes have to be
 copied from remote file. Default is to copy them.
 
-=item copyperms =E<gt> $bool
+=item copy_perms =E<gt> $bool
 
 determines if permision attributes have to be copied from remote
 file. Default is to copy them after applying the local process umask.
@@ -1122,7 +1259,7 @@ the copied file. Default is to use the umask for the current process.
 sets the permision mask of the file to be $perm, umask and remote
 permissions are ignored.
 
-=item blocksize =E<gt> $bytes
+=item block_size =E<gt> $bytes
 
 size of the blocks the file is being splittered on for
 transfer. Incrementing this value can improve performance but some
@@ -1144,9 +1281,9 @@ progress meters, etc.
 
 =back
 
-=item $sftp-E<gt>ls($remote)
+=item $sftp-E<gt>ls($remote, %opts)
 
-Fetches a directory listing of C<$remote>.
+Fetches a directory listing of the remote B<directory> C<$remote>.
 
 Returns a reference to a list of entries. Every entry is a reference
 to a hash with three keys: C<filename>, the name of the entry;
@@ -1159,6 +1296,158 @@ permissions and size.
 
     print "$_->{filename}\n" for (@$ls);
 
+The options accepted by this method are:
+
+=over 4
+
+=item wanted =E<gt> qr/.../
+
+Only elements which filename match the regular expresion are included
+on the listing.
+
+=item wanted =E<gt> sub {...}
+
+Only elements for which the callback returns a true value are included
+on the listing. The callback is called with two arguments: the
+C<$sftp> object and the current entry (a hash reference as described
+before). For instance:
+
+  use Fcntl ':mode';
+
+  my $files = $sftp->ls ( '/home/hommer',
+			  wanted => sub {
+			      my $entry = $_[1];
+			      S_ISREG($entry->{a}->perm)
+			  } )
+	or die "ls failed: ".$sftp->error;
+
+
+=item no_wanted =E<gt> qr/.../
+
+=item no_wanted =E<gt> sub {...}
+
+those options have the oposite result to their C<wanted> counterparts:
+
+  my $no_hidden = $sftp->ls( '/home/homer',
+			     no_wanted => qr/^\./ )
+	or die "ls failed";
+
+
+When both C<no_wanted> and C<wanted> rules are used, the C<no_wanted>
+rule is applied first and then the C<wanted> one (order is important
+if the callbacks have side effects).
+
+=item ordered =E<gt> 1
+
+the list of entries is ordered by filename.
+
+=back
+
+=item $sftp-E<gt>find($path, %opts)
+
+=item $sftp-E<gt>find(\@paths, %opts)
+
+Does a recursive seach over the given directory C<$path> (or
+directories C<@path>) and returns a list of the entries found or the
+total number of them on scalar context.
+
+Every entry is a reference to a hash with two keys: C<filename>, the
+full path of the entry; and C<a>, a Net::SFTP::Foreign::Attributes
+object containing file atime, mtime, permissions and size.
+
+This method tries to recover and continue under error conditions.
+
+The options accepted by this method are:
+
+=over 4
+
+=item on_error =E<gt> sub { ... }
+
+the callback is called when some error is detected, two arguments are
+passed: the C<$sftp> object and the entry that was being processed
+when the error happened. For instance:
+
+  my @find = $sftp->find( '/',
+			  on_error => sub {
+			      my ($sftp, $e) = @_;
+		 	      print STDERR "error processing $e->{filename}: "
+				   . $sftp->error;
+			  } );
+
+=item realpath =E<gt> 1
+
+calls method C<realpath> for every entry, the result is stored under
+the key C<realpath>. This option slows down the process as a new
+remote query is performed for every entry, specially on networks with
+high latency.
+
+=item follow_links =E<gt> 1
+
+By default symbolic links are not resolved and appear as that on the
+final listing. This option causes then to be resolved and substituted
+by the target file system object. Dangling links are ignored, though
+they generate a call to the C<on_error> callback when stat'ing them
+fails.
+
+Following sym links can introduce loops on the search. Infinite loops
+are detected and broken but files can still appear repeated on the
+final listing under different names unless the option C<realpath> is
+also actived.
+
+=item ordered =E<gt> 1
+
+By default, the file system is searched in an implementation dependant
+order (actually optimized for low memory comsumption). If this option
+is included, the file system is searched in a deep-first, sorted by
+filename fashion.
+
+=item wanted =E<gt> qr/.../
+
+=item wanted =E<gt> sub { ... }
+
+=item no_wanted =E<gt> qr/.../
+
+=item no_wanted =E<gt> sub { ... }
+
+These options have the same effect as on the C<ls> method, allowing to
+filter out unwanted entries (note than filename keys contain full
+paths here).
+
+The callbacks can also be used to perform some action instead of
+creating the full listing of entries in memory (that could use huge
+amounts of RAM for big file trees):
+
+  $sftp->find($src_dir,
+	      wanted => sub {
+		  my $fn = $_[1]->{filename}
+		  print "$fn\n" if $fn =~ /\.p[ml]$/;
+		  return undef # so it is discarded
+	      });
+
+=item descend =E<gt> qr/.../
+
+=item descend =E<gt> sub { ... }
+
+=item no_descend =E<gt> qr/.../
+
+=item no_descend =E<gt> sub { ... }
+
+These options, similar to the C<wanted> ones allow to prune the
+search, discarding full subdirectories. For instance:
+
+    use Fcntl ':mode';
+    my @files = $sftp->find( '.',
+			     no_descend => qr/\.svn$/,
+			     wanted => sub {
+				 S_ISREG($_[1]->{a}->perm)
+			     } );
+
+
+C<descend> and C<wanted> rules are unrelated. A directory discarded by
+a C<wanted> rule will still be recursively searched unless it is also
+discarded on a C<descend> rule and vice-versa.
+
+=back
 
 =item $sftp-E<gt>open($path, $flags [, $attrs ])
 

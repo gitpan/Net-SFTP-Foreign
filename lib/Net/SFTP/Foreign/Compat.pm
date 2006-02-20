@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign::Compat;
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 use Net::SFTP::Foreign;
 our @ISA = qw(Net::SFTP::Foreign);
@@ -74,14 +74,13 @@ sub put {
 
 sub ls {
     my ($sftp, $path, $cb) = @_;
-    my $ls = $sftp->SUPER::ls($path)
-	or return ();
-
     if ($cb) {
-	$cb->($_) for (@$ls);
+	$sftp->SUPER::ls($path,
+			 wanted => sub { $cb->($_[1]); 0});
+	return ();
     }
     else {
-	return @$ls;
+	return @{$sftp->SUPER::ls($path) || []}
     }
 }
 

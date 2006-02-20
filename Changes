@@ -1,7 +1,15 @@
 Revision history for Net::SFTP::Foreign
 
-0.90_01 Feb 16 2005
-	- almost full rewrite exposing new much improved an
+0.90_02 Feb 20 2006
+	- added new method find
+	- ls method expanded with callback
+	- contructor rewritten
+	- better docs for Constants package
+	- Compat module updated
+	- several corrections on the docs
+	
+0.90_01 Feb 16 2006
+	- almost full rewrite exposing new much improved and
 	  incompatible API!!!
 
 --------------------------------------------------------------------------
