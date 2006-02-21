@@ -1,5 +1,9 @@
 Revision history for Net::SFTP::Foreign
 
+0.90_03 Feb 21 2006
+	- minor corrections to the docs
+	- new methods ...
+
 0.90_02 Feb 20 2006
 	- added new method find
 	- ls method expanded with callback
