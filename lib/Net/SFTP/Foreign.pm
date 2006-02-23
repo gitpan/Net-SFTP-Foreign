@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '0.90_03';
+our $VERSION = '0.90_04';
 
 use strict;
 use warnings;
@@ -8,9 +8,6 @@ use Carp qw(carp croak );
 use Scalar::Util qw(dualvar);
 use Fcntl qw(:mode);
 use IPC::Open2;
-
-my $has_sk;
-BEGIN { $has_sk = eval "use Sort::Key; 1" }
 
 use Net::SFTP::Foreign::Constants qw( :fxp :flags :att
 				      :status :error
@@ -415,6 +412,64 @@ sub _gen_simple_method {
 				  SFTP_ERR_REMOTE_FSETSTAT_FAILED,
 				  "Couldn't setstat remote file (fsetstat)");
 
+sub _gen_getpath_method {
+    my ($code, $error, $name) = @_;
+    return sub {
+	my ($sftp, $path) = @_;
+	
+	my $id = $sftp->_send_str_request($code, $path);
+
+	if (my $msg = $sftp->_get_msg_and_check(SSH2_FXP_NAME, $id,
+						$error,
+						"Couldn't get $name for remote '$path'")) {
+	    $msg->get_int32 > 0
+		and return $msg->get_str;
+
+	    $sftp->_set_error($error,
+			      "Couldn't get $name for remote '$path', no names on reply")
+	}
+	return undef;
+    };
+}
+
+## SSH2_FXP_REALPATH (16)
+## SSH2_FXP_READLINK (19)
+# return path on success, undef on failure
+*realpath = _gen_getpath_method(SSH2_FXP_REALPATH,
+				SFTP_ERR_REMOTE_REALPATH_FAILED,
+				"realpath");
+*readlink = _gen_getpath_method(SSH2_FXP_READLINK,
+				SFTP_ERR_REMOTE_READLINK_FAILED,
+				"link target");
+
+## SSH2_FXP_RENAME (18)
+# true on success, undef on failure
+sub rename {
+    my ($sftp, $old, $new) = @_;
+    my $id = $sftp->_send_new_msg(SSH2_FXP_RENAME,
+				  str => $old,
+				  str => $new);
+
+    $debug and _debug("Sent message SSH2_FXP_RENAME '$old' => '$new'");
+
+    return $sftp->_check_status_ok($id, SFTP_ERR_REMOTE_RENAME_FAILED,
+				   "Couldn't rename remote file '$old' to '$new'");
+}
+
+## SSH2_FXP_SYMLINK (20)
+# true on success, undef on failure
+sub symlink {
+    my ($sftp, $target, $new) = @_;
+    my $id = $sftp->_send_new_msg(SSH2_FXP_SYMLINK,
+				  str => $new,
+				  str => $target);
+
+    $debug and _debug("Sent message SSH2_FXP_SYMLINK '$new' -> '$target'");
+
+    return $sftp->_check_status_ok($id, SFTP_ERR_REMOTE_SYMLINK_FAILED,
+				   "Couldn't create symlink '$new' pointing to '$target'");
+}
+
 sub _close_save_state {
     my $sftp = shift;
     my $oerror = $sftp->{error};
@@ -427,44 +482,13 @@ sub _close_save_state {
     undef;
 }
 
-## SSH2_FXP_REALPATH (16)
-# returns realpath on success, undef on failure
-sub realpath {
-    my ($sftp, $path) = @_;
-
-    my $id = $sftp->_send_str_request(SSH2_FXP_REALPATH, $path);
-
-    if (my $msg = $sftp->_get_msg_and_check(SSH2_FXP_NAME, $id,
-					    SFTP_ERR_REMOTE_REALPATH_FAILED,
-					    "Couldn't get real path for remote file")) {
-	$msg->get_int32 > 0
-	    and return $msg->get_str;
-
-	$sftp->_set_error(SFTP_ERR_REMOTE_REALPATH_FAILED,
-			 "Couldn't get real path for remote file, no names on reply")
-    }
-    return undef;
-}
-
-## SSH2_FXP_RENAME (18)
-# true on success, undef on failure
-sub rename {
-    my ($sftp, $old, $new) = @_;
-    my $id = $sftp->_send_new_msg(SSH2_FXP_RENAME,
-					 str => $old,
-					 str => $new);
-
-    $debug and _debug("Sent message SSH2_FXP_RENAME '$old' => '$new'");
-
-    return $sftp->_check_status_ok($id, SFTP_ERR_REMOTE_RENAME_FAILED,
-				   "Couldn't rename remote file '$old' to '$new'");
-}
-
 ## High-level client -> server methods.
 
 # returns true on success, undef on failure
 sub get {
     my ($sftp, $remote, $local, %opts) = @_;
+
+    print "copying remote $remote to $local\n";
 
     $sftp->_set_error;
 
@@ -483,10 +507,10 @@ sub get {
     %opts and croak "invalid option(s) '".CORE::join("', '", keys %opts)."'";
 
     croak "'perm' and 'umask' options can not be used simultaneously"
-	if (defined $perm and $umask);
+	if (defined $perm and defined $umask);
 
     croak "'perm' and 'copy_perms' options can not be used simultaneously"
-	if (defined $perm and $copy_perms);
+	if (defined $perm and defined $copy_perms);
 
     my $numask;
 
@@ -510,56 +534,57 @@ sub get {
     defined $handle or return undef;
 
     my $fh;
-    unless ($_dont_save) {
-	if (!$overwrite and -e $local) {
-	    $sftp->_set_error(SFTP_ERR_LOCAL_ALREADY_EXISTS,
-			     "local file $local already exists");
-	    return undef;
-	}
+    my @msgid;
+
+ OK: for (1) {
+	unless ($_dont_save) {
+	    if (!$overwrite and -e $local) {
+		$sftp->_set_error(SFTP_ERR_LOCAL_ALREADY_EXISTS,
+				  "local file $local already exists");
+		last OK;
+	    }
 	
-	if ($copy_perms) {
-	    my $aperm = $a->perm;
-	    $perm = 0666 unless defined $perm;
-	    $a->perm =~ /^(\d+)$/ or die "perm is not numeric";
-	    $perm = int $1;
-	}
+	    if ($copy_perms) {
+		my $aperm = $a->perm;
+		$perm = 0666 unless defined $perm;
+		$a->perm =~ /^(\d+)$/ or die "perm is not numeric";
+		$perm = int $1;
+	    }
 
-	my $lumask = ~$perm & 0666;
-	umask $lumask;
+	    my $lumask = ~$perm & 0666;
+	    umask $lumask;
 
-	unless (CORE::open $fh, ">", $local) {
+	    unless (CORE::open $fh, ">", $local) {
+		umask $oldumask;
+		$sftp->_set_error(SFTP_ERR_LOCAL_OPEN_FAILED,
+				  "Can't open $local: $!");
+		last OK;
+	    }
 	    umask $oldumask;
-	    $sftp->_set_error(SFTP_ERR_LOCAL_OPEN_FAILED,
-			     "Can't open $local: $!");
-	    return undef;
-	}
-	umask $oldumask;
 
-	binmode $fh;
+	    binmode $fh;
 
-	if ((0666 & ~$lumask) != $perm) {
-	    unless (chmod $perm & $numask, $fh) {
-		$sftp->_set_error(SFTP_ERR_LOCAL_CHMOD_FAILED,
-				  "Can't chmod $local: $!");
-		return undef;
+	    if ((0666 & ~$lumask) != $perm) {
+		unless (chmod $perm & $numask, $fh) {
+		    $sftp->_set_error(SFTP_ERR_LOCAL_CHMOD_FAILED,
+				      "Can't chmod $local: $!");
+		    last OK;
+		}
 	    }
 	}
-    }
 
-    my @msgid;
-    my @askoff;
-    my $askoff = 0;
-    my $loff = 0;
-    my $rfno = fileno($sftp->{ssh_in});
+	my @askoff;
+	my $askoff = 0;
+	my $loff = 0;
+	my $rfno = fileno($sftp->{ssh_in});
 
- OK: do {
 	while (1) {
 	    # request a new block if queue is not full
 	    if (!@msgid or ($size <= $askoff and @msgid < $queue_size)) {
 		my $id = $sftp->_send_new_msg(SSH2_FXP_READ, str=> $handle,
 					      int64 => $askoff, int32 => $block_size);
 		$debug and _debug("Sent message SSH2_FXP_READ I:$id O:$askoff");
-
+		
 		push @msgid, $id;
 		push @askoff, $askoff;
 		$askoff += $block_size;
@@ -609,7 +634,7 @@ sub get {
 
 	    unless ($_dont_save or print $fh $data) {
 		$sftp->_set_error(SFTP_ERR_LOCAL_WRITE_FAILED,
-				 "unable to write data to local file $local: $!");
+				  "unable to write data to local file $local: $!");
 		last OK;
 	    }
 	}
@@ -682,10 +707,10 @@ sub put {
     %opts and croak "invalid option(s) '".CORE::join("', '", keys %opts)."'";
 
     croak "'perm' and 'umask' options can not be used simultaneously"
-	if (defined $perm and $umask);
+	if (defined $perm and defined $umask);
 
     croak "'perm' and 'copy_perms' options can not be used simultaneously"
-	if (defined $perm and $copy_perms);
+	if (defined $perm and defined $copy_perms);
 
     my $numask;
 
@@ -731,7 +756,7 @@ sub put {
     my $readoff = 0;
     my $rfno = fileno($sftp->{ssh_in});
 
- OK: do {
+ OK: for (1) {
 	my $eof;
 	while (1) {
 	    if (!$eof and @msgid < $queue_size) {
@@ -802,9 +827,20 @@ sub put {
     return $sftp->{error} == 0;
 }
 
+{
+    my $has_sk;
+    sub _has_sk {
+	unless (defined $has_sk) {
+	    eval { require Sort::Key };
+	    $has_sk = ($@ ne '');
+	}
+	return $has_sk;
+    }
+}
+
 sub _sort_entries {
     my $e = shift;
-    if ($has_sk) {
+    if (_has_sk) {
 	&Sort::Key::keysort_inplace(sub { $_->{filename} }, $e);
     }
     else {
@@ -837,6 +873,7 @@ sub ls {
 
     my $ordered = delete $opts{ordered};
     my $follow_links = delete $opts{follow_links};
+    my $atomic_readdir = delete $opts{atomic_readdir};
 
     my $wanted = delete $opts{_wanted} ||
 	_gen_wanted(delete $opts{wanted},
@@ -873,7 +910,7 @@ sub ls {
 		    }
 		}
 
-		if (!$wanted or $wanted->($sftp, $entry)) {
+		if ($atomic_readdir or !$wanted or $wanted->($sftp, $entry)) {
 		    push @dir, $entry;
 		}
             }
@@ -886,9 +923,17 @@ sub ls {
 
     $sftp->_close_save_state($handle);
 
-    _sort_entries \@dir if $ordered;
+    unless ($sftp->{error} == 0) {
+	if ($atomic_readdir and $wanted) {
+	    @dir = grep { $wanted->($sftp, $_) } @dir;
+	}
 
-    return $sftp->{error} == 0 ? \@dir : undef;
+	_sort_entries \@dir if $ordered;
+	
+	return \@dir;
+    }
+
+    return undef;
 }
 
 sub _call_on_error {
@@ -913,6 +958,7 @@ sub find {
     my $on_error = delete $opts{on_error};
     my $realpath = delete $opts{realpath};
     my $ordered = delete $opts{ordered};
+    my $atomic_readdir = delete $opts{atomic_readdir};
     my $wanted = _gen_wanted( delete $opts{wanted},
 			      delete $opts{no_wanted} );
     my $descend = _gen_wanted( delete $opts{descend},
@@ -973,16 +1019,16 @@ sub find {
 	my $fn = $try->{filename};
 	next if $done{$fn}++;
 
-	my $a = $try->{a} || $sftp->lstat($fn)
+	my $a = $try->{a} ||= $sftp->lstat($fn)
 	    or next;
 
 	$task->($try);
 
 	if (S_ISDIR($a->perm)) {
 	    if (!$descend or $descend->($sftp, $try)) {
-		if ($ordered) {
+		if ($ordered or $atomic_readdir) {
 		    my $ls = $sftp->ls( $fn,
-					ordered => 1,
+					ordered => $ordered,
 					_wanted => sub {
 					    my $child = $_[1]->{filename};
 					    if ($child !~ /^\.\.?$/) {
@@ -1059,7 +1105,7 @@ sub _glob_to_regex {
     my $first_byte = 1;
     while ($glob =~ /\G(.)/g) {
 	my $char = $1;
-	print "char: $char\n";
+	# print "char: $char\n";
 	if ($char eq '\\') {
 	    $escaping = 1;
 	}
@@ -1119,7 +1165,6 @@ sub _glob_to_regex {
     $ignore_case ? qr/^$regex$/i : qr/^$regex$/;
 }
 
-
 sub glob {
     my ($sftp, $glob, %opts) = @_;
     return () if $glob eq '';
@@ -1132,6 +1177,8 @@ sub glob {
 			      delete $opts{no_wanted});
     my $strict_leading_dot =
 	exists $opts{strict_leading_dot} ? delete $opts{strict_leading_dot} : 1;
+
+    %opts and croak "invalid option(s) '".CORE::join("', '", keys %opts)."'";
 
     my $wantarray = wantarray;
 
@@ -1179,19 +1226,186 @@ sub glob {
 		or $sftp->_call_on_error($on_error, $parent);
 	}
     }
-
     return wantarray ? @res : $res;
 }
 
-sub rget {
-    my ($sftp, $remote, $local, %optiosn) = @_;
+sub rremove {
+    my ($sftp, $dirs, $local, %opts) = @_;
 
-    croak "this method has not been implemented yet"
+    my $on_error = delete $opts{on_error};
+    my $wanted = _gen_wanted( delete $opts{wanted},
+			      delete $opts{no_wanted});
+
+    %opts and croak "invalid option(s) '".CORE::join("', '", keys %opts)."'";
+
+    my $count;
+
+    my @dirs;
+    $sftp->find( $dirs,
+		 on_error => $on_error,
+		 atomic_readdir => 1,
+		 wanted => sub {
+		     my $e = $_[1];
+		     my $fn = $e->{filename};
+		     if (S_ISDIR($e->{a}->perm)) {
+			 push @dirs, $e;
+		     }
+		     else {
+			 if (!$wanted or $wanted->($sftp, $e)) {
+			     if ($sftp->remove($fn)) {
+				 $count++;
+			     }
+			     else {
+				 $sftp->_call_on_error($on_error, $e);
+			     }
+			 }
+		     }
+		 } );
+
+    _sort_entries(\@dirs);
+
+    while (@dirs) {
+	my $e = pop @dirs;
+	if (!$wanted or $wanted->($sftp, $e)) {
+	    if ($sftp->remove($e->{filename})) {
+		$count++;
+	    }
+	    else {
+		$sftp->_call_on_error($on_error, $e);
+	    }
+	}
+    }
+
+    return $count;
+}
+
+sub rget {
+    my ($sftp, $remote, $local, %opts) = @_;
+
+    # my $cb = delete $opts{callback};
+    my $umask = delete $opts{umask};
+    my $copy_perms = delete $opts{copy_perms};
+    my $copy_time = delete $opts{copy_time};
+    my $block_size = delete $opts{block_size};
+    my $queue_size = delete $opts{queue_size};
+    my $overwrite = delete $opts{overwrite};
+    my $newer_only = delete $opts{newer_only};
+    my $on_error = delete $opts{on_error};
+    my $ignore_links = delete $opts{ignore_links};
+
+    # my $relative_links = delete $opts{relative_links};
+
+    my $wanted = _gen_wanted( delete $opts{wanted},
+			      delete $opts{no_wanted} );
+
+    %opts and croak "invalid option(s) '".CORE::join("', '", keys %opts)."'";
+
+    $remote = $sftp->join($remote, './');
+    my $qremote = quotemeta $remote;
+    my $reremote = qr/^$qremote(.*)$/i;
+
+    $umask = umask $umask if (defined $umask);
+
+    $copy_perms = 1 unless defined $copy_perms;
+    $copy_time = 1 unless defined $copy_time;
+
+    require File::Spec;
+
+    my $count = 0;
+    $sftp->find( [$remote],
+		 descend => sub {
+		     my $e = $_[1];
+		     # print "descend: $e->{filename}\n";
+		     if (!$wanted or $wanted->($sftp, $e)) {
+			 my $fn = $e->{filename};
+			 if ($fn =~ $reremote) {
+			     my $lpath = File::Spec->catdir($local, $1);
+			     if (-d $lpath) {
+				 $sftp->_set_error(SFTP_ERR_LOCAL_ALREADY_EXISTS,
+						   "directory '$lpath' already exists");
+				 $sftp->_call_on_error($on_error, $e);
+				 return 1;
+			     }
+			     else {
+				 if (mkdir $lpath, ($copy_perms ? $e->{a}->perm & 0777 : 0777)) {
+				     $count++;
+				     return 1;
+				 }
+				 else {
+				     $sftp->_set_error(SFTP_ERR_LOCAL_MKDIR_FAILED,
+						       "mkdir '$lpath' failed: $!");
+				 }
+			     }
+			 }
+			 else {
+			     $sftp->_set_error(SFTP_ERR_REMOTE_BAD_PATH,
+					       "bad remote path '$fn'");
+			 }
+			 $sftp->_call_on_error($on_error, $e);
+		     }
+		     return undef;
+		 },
+		 wanted => sub {
+		     my $e = $_[1];
+		     # print "file fn:$e->{filename}, a:$e->{a}\n";
+		     unless (S_ISDIR($e->{a}->perm)) {
+			 if (!$wanted or $wanted->($sftp, $e)) {
+			     my $fn = $e->{filename};
+			     if ($fn =~ $reremote) {
+				 my $lpath = File::Spec->catfile($local, $1);
+				 if (S_ISLNK($e->{a}->perm) and !$ignore_links) {
+				     if (my $link = $sftp->readlink($fn)) {
+					 if (eval {CORE::symlink $link, $lpath}) {
+					     $count++;
+					     return undef;
+					 }
+					 $sftp->_set_error(SFTP_ERR_LOCAL_SYMLINK_FAILED,
+							   "creation of symlink '$lpath' failed: $!");
+				     }
+				 }
+				 elsif (S_ISREG($e->{a}->perm)) {
+				     if ($newer_only and -e $lpath
+					 and (stat _)[9] >= $e->{a}->mtime) {
+					 $sftp->_set_error(SFTP_ERR_LOCAL_ALREADY_EXISTS,
+							   "newer local file '$lpath' already exists");
+				     }
+				     else {
+					 if ($sftp->get($fn, $lpath,
+							overwrite => $overwrite,
+							queue_size => $queue_size,
+							block_size => $block_size,
+							copy_perms => $copy_perms,
+							copy_time => $copy_time)) {
+					     $count++;
+					     return undef;
+					 }
+				     }
+				 }
+				 else {
+				     $sftp->_set_error(SFTP_ERR_REMOTE_BAD_OBJECT,
+						       ( $ignore_links
+							 ? "remote file '$fn' is not regular file or directory"
+							 : "remote file '$fn' is not regular file, directory or link"));
+				 }
+			     }
+			     else {
+				 $sftp->_set_error(SFTP_ERR_REMOTE_BAD_PATH,
+						   "bad remote path '$fn'");
+			     }
+			     $sftp->_call_on_error($on_error, $e);
+			 }
+		     }
+		     return undef;
+		 } );
+
+    umask $umask if defined $umask;
+
+    return $count;
 }
 
 sub rput {
     my ($sftp, $local, $remote, %optiosn) = @_;
-
+    
     croak "this method has not been implemented yet"
 }
 
@@ -1538,6 +1752,17 @@ operation, setting this option causes the method to perform C<stat>
 requests instead. C<lstat> attributes will stil appear for links
 pointing to non existant places.
 
+=item atomic_readdir =E<gt> 1
+
+Reading a directory is not an atomic SFTP operation and the protocol
+draft does not define what happens if C<readdir> requests and write
+operations (for instance C<remove> or C<open>) affecting the same
+directory are intermixed.
+
+This flag ensures that no callback call (C<wanted>, C<no_wanted>) is
+performed in the middle of reading a directory and has to be set if
+any of the callbacks can modify the file system.
+
 =back
 
 =item $sftp-E<gt>find($path, %opts)
@@ -1554,7 +1779,7 @@ object containing file atime, mtime, permissions and size.
 
 This method tries to recover and continue under error conditions.
 
-The options accepted by this method are:
+The options accepted:
 
 =over 4
 
@@ -1629,7 +1854,7 @@ amounts of RAM for big file trees):
 
 =item no_descend =E<gt> sub { ... }
 
-These options, similar to the C<wanted> ones allow to prune the
+These options, similar to the C<wanted> ones, allow to prune the
 search, discarding full subdirectories. For instance:
 
     use Fcntl ':mode';
@@ -1644,6 +1869,10 @@ C<descend> and C<wanted> rules are unrelated. A directory discarded by
 a C<wanted> rule will still be recursively searched unless it is also
 discarded on a C<descend> rule and vice-versa.
 
+=item atomic_readdir =E<gt> 1
+
+see C<ls> method documentation.
+
 =back
 
 =item $sftp-E<gt>glob($pattern, %opts)
@@ -1651,14 +1880,16 @@ discarded on a C<descend> rule and vice-versa.
 performs a remote glob and returns the list of matching entries in the
 same format as C<find> method.
 
-The options accepted by this command are:
+This method tries to recover and continue under error conditions.
+
+The options accepted:
 
 =over 4
 
 =item ignore_case =E<gt> 1
 
 by default the matching over the file system is carried out in a case
-sensitive fashion, this flags changes it to be case insensitive.
+sensitive fashion, this flag changes it to be case insensitive.
 
 =item strict_leading_dot =E<gt> 0
 
@@ -1683,13 +1914,100 @@ these options perform as on the C<ls> method.
 =item $sftp-E<gt>rget($remote, $local, %opts)
 
 Recursively copies the contents of remote directory C<$remote> to
-local directory C<$local>. I<Not implemented yet>.
+local directory C<$local>. Returns the total number of elements
+(files, dirs and symbolic links) successfully copied.
+
+This method tries to recover and continue when some error happens.
+
+The options accepted are:
+
+=over 4
+
+=item umask =E<gt> $umask
+
+use umask C<$umask> to set permissions on the files and directories
+created.
+
+=item copy_perms =E<gt> $bool;
+
+if set to a true value, file and directory permissions are copied
+from the remote server (after applying the umask). By default is on.
+
+=item copy_time =E<gt> $bool;
+
+if set to a true value, file atime and mtime are copied from the
+remote server. By default is on.
+
+=item overwrite =E<gt> $bool
+
+if set to a true value, when a local file already exists it is
+overwritten. By default is on.
+
+=item newer_only =E<gt> $bool
+
+if set to a true value, when a local file already exists it is
+overwritten only if the remote file is newer.
+
+=item ignore_links =E<gt> $bool
+
+if set to a true value, symbolic links on the remote file system are
+skipped.
+
+=item on_error =E<gt> sub { ... }
+
+the passed sub is called when some error happens. It is called with two
+arguments, the C<$sftp> object and the entry causing the error.
+
+=item wanted =E<gt> ...
+
+=item no_wanted =E<gt> ...
+
+This option allows to select which files and directories have to be
+copied. See also C<ls> method docs.
+
+If a directory is discarded all of its contents are also discarded (as
+it is not possible to copy child files without creating the directory
+first!).
+
+=item block_size =E<gt> $block_size
+
+=item queue_size =E<gt> $queue_size
+
+see docs for C<get> method.
+
+=back
 
 =item $sftp-E<gt>rput($local, $remote, %opts)
 
 Recursively copies the contents of local directory C<$local> to
 remote directory C<$remote>. I<Not implemented yet>.
 
+=item $sftp-E<gt>rremove($dir, %opts)
+
+=item $sftp-E<gt>rremove(\@dirs, %opts)
+
+recursively remove directory $dir (or directories @dirs) and its
+contents. Returns the number of elements successfully removed.
+
+This method tries to recover and continue when some error happens.
+
+The options accepted are:
+
+=over 4
+
+=item on_error =E<gt> sub { ... }
+
+This callback is called when some error is occurs. The arguments
+passed are the C<$sftp> object and the current entry (see C<ls> docs
+for more information).
+
+=item wanted =E<gt> ...
+
+=item no_wanted =E<gt> ...
+
+Allow to select which file system objects have to be deleted.
+
+=back
 
 =item $sftp-E<gt>join(@paths)
 
@@ -1821,11 +2139,23 @@ Returns the absolute path on success, C<undef> on failure.
 Sends a C<SSH_FXP_RENAME> command to rename C<$old> to C<$new>.
 Returns a true value on success and undef on failure.
 
+=item $sftp-E<gt>readlink($path)
+
+Sends a C<SSH_FXP_READLINK> command to read the path where the
+simbolic link is pointing.
+
+Returns the target path on success and undef on failure.
+
+=item $sftp-E<gt>symlink($target, $path)
+
+Sends a C<SSH_FXP_SYMLINK> command to create a new symbolic link
+C<$path> pointing to C<$target>.
+
 =back
 
 =head1 BUGS
 
-This is development version, expect bugs!!!
+This is a development version, expect bugs!!!
 
 =head1 SEE ALSO
 

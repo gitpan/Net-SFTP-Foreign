@@ -1,8 +1,12 @@
 Revision history for Net::SFTP::Foreign
 
+0.90_04 Feb 22 2006
+	- remove bug in get that could left remote file handles open
+	- new methods readlink, symlink, rremove, rget.
+
 0.90_03 Feb 21 2006
 	- minor corrections to the docs
-	- new methods ...
+	- new methods glob and join implemented.
 
 0.90_02 Feb 20 2006
 	- added new method find
