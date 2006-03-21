@@ -1,26 +1,16 @@
 Revision history for Net::SFTP::Foreign
 
-0.90_04 Feb 22 2006
-	- remove bug in get that could left remote file handles open
-	- new methods readlink, symlink, rremove, rget.
+0.59  Mar 14 2006
+	- on Solaris, closing ssh pipes doesn't terminate
+	  the slave process (bug report and lots of help
+	  troubleshooting it by Colin Campbell).
 
-0.90_03 Feb 21 2006
-	- minor corrections to the docs
-	- new methods glob and join implemented.
-
-0.90_02 Feb 20 2006
-	- added new method find
-	- ls method expanded with callback
-	- contructor rewritten
-	- better docs for Constants package
-	- Compat module updated
-	- several corrections on the docs
-	
-0.90_01 Feb 16 2006
-	- almost full rewrite exposing new much improved and
-	  incompatible API!!!
-
---------------------------------------------------------------------------
+0.58  Feb 16 2006
+	- obsolete current interface, request developers to go for
+	  Net::SFTP::Foreign::Compat, or upgrado to the development
+	  version.
+	- kill ssh only on Windows machines. On Unix, just closing IO
+	  should do.
 
 0.57  Nov 29 2005
 	- check sysread return value when reading from pipe (bug

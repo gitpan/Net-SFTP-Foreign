@@ -34,7 +34,7 @@ use Term::ReadLine;
 use Net::SFTP::Foreign::Constants qw(
     SSH2_FILEXFER_ATTR_PERMISSIONS
     SSH2_FILEXFER_VERSION );
-use Net::SFTP::Foreign::Attributes::Compat;
+use Net::SFTP::Foreign::Attributes;
 
 sub new {
     my $class = shift;
@@ -159,7 +159,7 @@ sub process_cd {
 sub process_mkdir {
     my($shell, @arg) = @_;
     $shell->mywarn("usage: mkdir path"), return unless @arg == 1;
-    my $a = Net::SFTP::Foreign::Attributes::Compat->new;
+    my $a = Net::SFTP::Foreign::Attributes->new;
     $a->flags( $a->flags | SSH2_FILEXFER_ATTR_PERMISSIONS );
     $a->perm(0777);
     $shell->{sftp}->do_mkdir(make_absolute($arg[0], $shell->{pwd}), $a);
@@ -208,7 +208,7 @@ psftp [B<-v>] [B<-C>] I<hostname>
 =head1 DESCRIPTION
 
 I<psftp> is an interactive SFTP client written in Perl, using the
-I<Net::SFTP::Foreign::Compat> libraries. It is very similar in functionality to
+I<Net::SFTP::Foreign> libraries. It is very similar in functionality to
 the I<sftp> program that is part of both OpenSSH and ssh2.
 
 On startup, I<psftp> logs into the specified I<hostname>, then
