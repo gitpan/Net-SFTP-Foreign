@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign::Buffer;
 
-our $VERSION = '0.53';
+our $VERSION = '0.90_01';
 
 use strict;
 use warnings;
@@ -8,7 +8,7 @@ no warnings 'uninitialized';
 
 use Carp;
 
-use constant HAS_QUADS => eval { no warnings; pack(Q => 1); 1 } ? 1 : 0;
+use constant HAS_QUADS => eval { no warnings; (undef) = pack(Q => 1); 1 } ? 1 : 0;
 
 
 sub new {
@@ -60,7 +60,7 @@ sub get_str {
 }
 
 
-sub get_attributes { Net::SFTP::Foreign::Attributes->new(Buffer => $_[0]) }
+sub get_attributes { Net::SFTP::Foreign::Attributes->new_from_buffer($_[0]) }
 
 
 sub put_int8 { ${$_[0]} .= pack(C => $_[1]) }
