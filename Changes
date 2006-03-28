@@ -1,5 +1,11 @@
 Revision history for Net::SFTP::Foreign
 
+0.90_06 Feb 24 2006
+	- implement rput
+	- use Win32::Socketpair on Windows
+	- implement API for local fs in Local
+	- move common functions to Common and Helpers packages
+
 0.90_05 Feb 23 2006
 	- convert remote file handle strings to tied file handles
 	- most methods changed to mimic perl buil-ins

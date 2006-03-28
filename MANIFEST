@@ -2,10 +2,13 @@ Changes
 eg/psftp
 lib/Net/SFTP/Foreign.pm
 lib/Net/SFTP/Foreign/Attributes.pm
-lib/Net/SFTP/Foreign/Buffer.pm
-lib/Net/SFTP/Foreign/Constants.pm
-lib/Net/SFTP/Foreign/Compat.pm
 lib/Net/SFTP/Foreign/Attributes/Compat.pm
+lib/Net/SFTP/Foreign/Buffer.pm
+lib/Net/SFTP/Foreign/Common.pm
+lib/Net/SFTP/Foreign/Compat.pm
+lib/Net/SFTP/Foreign/Constants.pm
+lib/Net/SFTP/Foreign/Helpers.pm
+lib/Net/SFTP/Foreign/Local.pm
 LICENSE
 Makefile.PL
 MANIFEST

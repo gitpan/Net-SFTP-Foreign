@@ -14,6 +14,21 @@ sub new {
     return bless { flags => 0}, $class;
 }
 
+sub new_from_stat {
+    if (@_ > 1) {
+	my ($class, undef, undef, $mode, undef,
+	    $uid, $gid, undef, $size, $atime, $mtime) = @_;
+	my $self = $class->new;
+
+	$self->set_perm($mode);
+	$self->set_ugid($uid, $gid);
+	$self->set_size($size);
+	$self->set_amtime($atime, $mtime);
+	return $self;
+    }
+    return undef;
+}
+
 sub new_from_buffer {
     my ($class, $buf) = @_;
     my $self = $class->new;
