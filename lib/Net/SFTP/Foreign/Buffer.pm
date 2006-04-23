@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign::Buffer;
 
-our $VERSION = '0.90_01';
+our $VERSION = '0.60';
 
 use strict;
 use warnings;
@@ -8,8 +8,10 @@ no warnings 'uninitialized';
 
 use Carp;
 
-use constant HAS_QUADS => eval { no warnings; (undef) = pack(Q => 1); 1 } ? 1 : 0;
-
+use constant HAS_QUADS => eval {
+    no warnings;
+    pack(Q => 0x1122334455667788) eq "\x11\x22\x33\x44\x55\x66\x77\x88"
+};
 
 sub new {
     my $class = shift;
@@ -60,7 +62,7 @@ sub get_str {
 }
 
 
-sub get_attributes { Net::SFTP::Foreign::Attributes->new_from_buffer($_[0]) }
+sub get_attributes { Net::SFTP::Foreign::Attributes->new(Buffer => $_[0]) }
 
 
 sub put_int8 { ${$_[0]} .= pack(C => $_[1]) }
