@@ -1,14 +1,21 @@
 Changes
 eg/psftp
 lib/Net/SFTP/Foreign.pm
-lib/Net/SFTP/Foreign/Compat.pm
 lib/Net/SFTP/Foreign/Attributes.pm
+lib/Net/SFTP/Foreign/Attributes/Compat.pm
 lib/Net/SFTP/Foreign/Buffer.pm
+lib/Net/SFTP/Foreign/Common.pm
+lib/Net/SFTP/Foreign/Compat.pm
 lib/Net/SFTP/Foreign/Constants.pm
-lib/Net/SFTP/Foreign/Util.pm
+lib/Net/SFTP/Foreign/Helpers.pm
+lib/Net/SFTP/Foreign/Local.pm
 LICENSE
 Makefile.PL
 MANIFEST
 META.yml			Module meta-data (added by MakeMaker)
 README
-t/Net-SFTP-Foreign.t
+rfc/draft-ietf-secsh-filexfer-02.txt
+rfc/draft-ietf-secsh-filexfer-12.txt
+t/1_run.t
+t/2_pods.t
+
