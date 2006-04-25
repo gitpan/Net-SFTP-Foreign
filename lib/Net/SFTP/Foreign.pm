@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '0.90_08';
+our $VERSION = '0.90_09';
 
 use strict;
 use warnings;
@@ -122,7 +122,7 @@ sub _do_io {
       if ($n > 0) {
 	if (vec($wv1, $fnoout, 1)) {
 	  my $written = syswrite($sftp->{ssh_out}, $$bout, 16384, $offout);
-	  unless (defined $written) {
+	  unless ($written) {
 	    $sftp->_conn_lost;
 	    return undef;
 	  }
@@ -130,7 +130,7 @@ sub _do_io {
 	}
 	if (vec($rv1, $fnoin, 1)) {
 	  my $read = sysread($sftp->{ssh_in}, $sftp->{_bin}, 16384, length($$bin));
-	  unless (defined $read) {
+	  unless ($read) {
 	    $sftp->_conn_lost;
 	    return undef;
 	  }

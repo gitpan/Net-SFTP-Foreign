@@ -1,5 +1,8 @@
 Revision history for Net::SFTP::Foreign
 
+0.90_09 Apr 25 2006
+	- bug on _do_io method corrected
+
 0.90_08 Apr 24 2006
 	- bug for copy_perms => 0 corrected (reported by Erik
 	  Johansen).
