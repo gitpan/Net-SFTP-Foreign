@@ -1,5 +1,10 @@
 Revision history for Net::SFTP::Foreign
 
+0.90_08 Apr 24 2006
+	- bug for copy_perms => 0 corrected (reported by Erik
+	  Johansen).
+	- usage checks added to most commands.
+
 0.90_07 Apr 23 2006
 	- don't use pack for quads on little-endian systems (bug
 	  reported by Mogens Hafsjold)

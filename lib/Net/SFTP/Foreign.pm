@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '0.90_07';
+our $VERSION = '0.90_08';
 
 use strict;
 use warnings;
@@ -413,6 +413,10 @@ sub _check_status_ok {
 ## SSH2_FXP_OPEN (3)
 # returns handle on success, undef on failure
 sub open {
+
+    (@_ >= 2 and @_ <= 4)
+	or croak 'Usage: $sftp->open($path [, $flags [, $attrs]])';
+
     my $sftp = shift;
     my($path, $flags, $a) = @_;
     $flags ||= 0;
@@ -435,6 +439,10 @@ sub open {
 
 ## SSH2_FXP_OPENDIR (11)
 sub opendir {
+
+    (@_ >= 2 and @_ <= 3)
+	or croak 'Usage: $sftp->opendir($path [, $attrs])';
+
     my $sftp = shift;
     my $id = $sftp->_queue_str_request(SSH2_FXP_OPENDIR, @_);
 
@@ -449,6 +457,10 @@ sub opendir {
 ## SSH2_FXP_READ (4)
 # returns data on success undef on failure
 sub sftpread {
+
+    (@_ >= 3 and @_ <= 4)
+	or croak 'Usage: $sftp->sftpread($fh, $offset [, $size])';
+
     my ($sftp, $rfh, $offset, $size) = @_;
 
     unless ($size) {
@@ -473,6 +485,9 @@ sub sftpread {
 ## SSH2_FXP_WRITE (6)
 # returns true on success, undef on failure
 sub sftpwrite {
+
+    @_ == 4 or croak 'Usage: $sftp->sftpwrite($fh, $offset, $data)';
+
     my ($sftp, $rfh, $offset, $data) = @_;
     my $rfid = $sftp->_rfid($rfh);
     defined $rfid or return undef;
@@ -489,8 +504,14 @@ sub sftpwrite {
 }
 
 sub seek {
+
+    (@_ >= 3 and @_ <= 4)
+	or croak 'Usage: $sftp->seek($fh, $pos [, $whence])';
+
     my ($sftp, $rfh, $pos, $whence) = @_;
     $sftp->flush($rfh) or return undef;
+
+    $whence ||= 0;
 
     if ($whence == 0) {
 	return $rfh->_pos($pos)
@@ -512,11 +533,17 @@ sub seek {
 }
 
 sub tell {
+
+    @_ == 2 or croak 'Usage: $sftp->tell($fh)';
+
     my ($sftp, $rfh) = @_;
     return $rfh->_pos + length ${$rfh->_bout};
 }
 
 sub eof {
+
+    @_ == 2 or croak 'Usage: $sftp->eof($fh)';
+
     my ($sftp, $rfh) = @_;
     $sftp->_fill_read_cache($rfh, 1);
     return length(${$rfh->_bin}) == 0
@@ -572,6 +599,9 @@ sub _write {
 }
 
 sub write {
+
+    @_ == 3 or croak 'Usage: $sftp->write($fh, $data)';
+
     my ($sftp, $rfh) = @_;
     $sftp->flush($rfh, 'in') or return undef;
 
@@ -588,6 +618,10 @@ sub write {
 }
 
 sub flush {
+
+    (@_ >= 2 and @_ <= 3)
+	or croak 'Usage: $sftp->flush($fh [, $direction])';
+
     my ($sftp, $rfh, $dir) = @_;
     $dir ||= '';
 
@@ -700,6 +734,9 @@ sub _fill_read_cache {
 }
 
 sub read {
+
+    @_ == 3 or croak 'Usage: $sftp->read($fh, $len)';
+
     my ($sftp, $rfh, $len) = @_;
     if ($sftp->_fill_read_cache($rfh, $len)) {
 	my $bin = $rfh->_bin;
@@ -744,6 +781,10 @@ sub _readline {
 }
 
 sub readline {
+
+    (@_ >= 2 and @_ <= 3)
+	or croak 'Usage: $sftp->readline($fh [, $sep])';
+
     my ($sftp, $rfh, $sep) = @_;
     if (!defined $sep or length $sep == 0) {
 	$sftp->_fill_read_cache($rfh);
@@ -766,6 +807,9 @@ sub readline {
 }
 
 sub getc {
+
+    @_ == 2 or croak 'Usage: $sftp->getc($fh)';
+
     my ($sftp, $rfh) = @_;
 
     $sftp->_fill_read_cache($rfh, 1);
@@ -780,6 +824,10 @@ sub getc {
 sub _gen_stat_method {
     my ($code, $error, $errstr) = @_;
     return sub {
+
+	(@_ >= 2 and @_ <= 3)
+	    or croak 'Usage: $sftp->stat($path)';
+
 	my $sftp = shift;
 	my $id = $sftp->_queue_str_request($code, @_);
 	if (my $msg = $sftp->_get_msg_and_check(SSH2_FXP_ATTRS, $id,
@@ -802,6 +850,10 @@ sub _gen_stat_method {
 			 "Couldn't stat remote file (stat)");
 
 sub fstat {
+
+    (@_ >= 2 and @_ <= 3)
+	or croak 'Usage: $sftp->fstat($path)';
+
     my $sftp = shift;
     my $id = $sftp->_queue_rfid_request(SSH2_FXP_FSTAT, @_);
     defined $id or return undef;
@@ -816,6 +868,10 @@ sub fstat {
 sub _gen_simple_method {
     my($code, $error, $errstr) = @_;
     return sub {
+
+	(@_ >= 2 and @_ <= 3)
+	    or croak 'Usage: $sftp->some_method($str [, $attrs])';
+
         my $sftp = shift;
         my $id = $sftp->_queue_str_request($code, @_);
         return $sftp->_check_status_ok($id, $error, $errstr);
@@ -844,6 +900,10 @@ sub _gen_simple_method {
 sub _gen_file_method {
     my($code, $error, $errstr) = @_;
     return sub {
+
+	(@_ >= 2 and @_ <= 3)
+	    or croak 'Usage: $sftp->some_method($fh [, $attrs])';
+
         my $sftp = shift;
         my $id = $sftp->_queue_rid_request($code, @_);
 	defined $id or return undef;
@@ -864,6 +924,9 @@ sub _gen_file_method {
 			   "Couldn't close remote file");
 
 sub close {
+
+    @_ == 2 or croak 'Usage: $sftp->close($fh)';
+
     my ($sftp, $rfh) = @_;
     $rfh->_check_is_file;
     $sftp->flush($rfh)
@@ -877,6 +940,9 @@ sub close {
 }
 
 sub closedir {
+
+    @_ == 2 or croak 'Usage: $sftp->closedir($dh)';
+
     my ($sftp, $rdh) = @_;
     $rdh->_check_is_dir;
 
@@ -888,6 +954,9 @@ sub closedir {
 }
 
 sub readdir {
+
+    @_ == 2 or croak 'Usage: $sftp->readdir($dh)';
+
     my ($sftp, $rdh) = @_;
 
     my $rdid = $sftp->_rdid($rdh)
@@ -938,6 +1007,9 @@ sub _readdir {
 sub _gen_getpath_method {
     my ($code, $error, $name) = @_;
     return sub {
+
+	@_ == 2 or croak 'Usage: $sftp->some_method($path)';
+
 	my ($sftp, $path) = @_;
 	
 	my $id = $sftp->_queue_str_request($code, $path);
@@ -980,6 +1052,9 @@ sub rename {
 ## SSH2_FXP_SYMLINK (20)
 # true on success, undef on failure
 sub symlink {
+
+    @_ == 3 or croak 'Usage: $sftp->symlink($target, $new)';
+
     my ($sftp, $target, $new) = @_;
     my $id = $sftp->_queue_new_msg(SSH2_FXP_SYMLINK,
 				  str => $new,
@@ -1012,6 +1087,8 @@ sub _gen_save_status_method {
 
 # returns true on success, undef on failure
 sub get {
+    @_ >= 3 or croak 'Usage: $sftp->get($remote, $local, %opts)';
+
     my ($sftp, $remote, $local, %opts) = @_;
 
     $sftp->_set_status;
@@ -1076,6 +1153,8 @@ sub get {
 	$perm = int $1;
     }
 
+    $perm = (0666 & $numask) unless defined $perm;
+
     my $lumask = ~$perm & 0666;
     umask $lumask;
 
@@ -1088,13 +1167,15 @@ sub get {
     umask $oldumask;
 
     binmode $fh;
-	
-    if ((0666 & ~$lumask) != $perm) {
-	unless (chmod $perm & $numask, $fh) {
-	    $sftp->_set_error(SFTP_ERR_LOCAL_CHMOD_FAILED,
-			      "Can't chmod $local: $!");
-	    return undef
-	}
+
+    # if ((0666 & ~$lumask) != $perm) { ...
+    # this optimization removed because it doesn't work for already
+    # existant files :-(
+
+    unless (chmod $perm & $numask, $fh) {
+	$sftp->_set_error(SFTP_ERR_LOCAL_CHMOD_FAILED,
+			  "Can't chmod $local: $!");
+	return undef
     }
 
     my @askoff;
@@ -1187,6 +1268,8 @@ sub get {
 
 # return file contents on success, undef on failure
 sub get_content {
+    @_ == 2 or croak 'Usage: $sftp->get_content($remote)';
+
     my ($sftp, $name) = @_;
     my @data;
 
@@ -1197,6 +1280,8 @@ sub get_content {
 }
 
 sub put {
+    @_ >= 3 or croak 'Usage: $sftp->put($local, $remote, %opts)';
+    
     my ($sftp, $local, $remote, %opts) = @_;
 
     $sftp->_set_error;
@@ -1338,6 +1423,9 @@ sub put {
 }
 
 sub ls {
+
+    @_ >= 2 or croak 'Usage: $sftp->ls($remote, %opts)';
+
     my ($sftp, $remote, %opts) = @_;
 
     my $ordered = delete $opts{ordered};
@@ -1429,6 +1517,8 @@ sub join {
 }
 
 sub glob {
+    @_ >= 2 or croak 'Usage: $sftp->glob($pattern, %opts)';
+
     my ($sftp, $glob, %opts) = @_;
     return () if $glob eq '';
 
@@ -1493,7 +1583,9 @@ sub glob {
 }
 
 sub rremove {
-    my ($sftp, $dirs, $local, %opts) = @_;
+    @_ >= 2 or croak 'Usage: $sftp->rremove($dirs, %opts)';
+
+    my ($sftp, $dirs, %opts) = @_;
 
     my $on_error = delete $opts{on_error};
     my $wanted = _gen_wanted( delete $opts{wanted},
@@ -1543,6 +1635,9 @@ sub rremove {
 }
 
 sub rget {
+
+    @_ >= 3 or croak 'Usage: $sftp->rget($remote, $local, %opts)';
+
     my ($sftp, $remote, $local, %opts) = @_;
 
     # my $cb = delete $opts{callback};
@@ -1667,6 +1762,8 @@ sub rget {
 }
 
 sub rput {
+
+    @_ >= 3 or croak 'Usage: $sftp->rput($local, $remote, %opts)';
 
     my ($sftp, $local, $remote, %opts) = @_;
 
