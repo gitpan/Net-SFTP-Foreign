@@ -1,58 +1,59 @@
 package Net::SFTP::Foreign::Attributes;
 
-our $VERSION = '0.51';
+our $VERSION = '0.90_01';
 
 use strict;
 use warnings;
+use Carp;
 
 use Net::SFTP::Foreign::Constants qw( :att );
 use Net::SFTP::Foreign::Buffer;
 
-our @FIELDS = qw( flags size uid gid perm atime mtime );
-
-for my $f (@FIELDS) {
-    no strict 'refs';
-    *$f = sub { @_ > 1 ? $_[0]->{$f} = $_[1] : $_[0]->{$f} }
+sub new {
+    my $class = shift;
+    return bless { flags => 0}, $class;
 }
 
-sub new {
-    my ($class, %param) = @_;
-    my $a = bless { }, $class;
+sub new_from_stat {
+    if (@_ > 1) {
+	my ($class, undef, undef, $mode, undef,
+	    $uid, $gid, undef, $size, $atime, $mtime) = @_;
+	my $self = $class->new;
 
-    for my $f (@FIELDS) {
-        $a->{$f} = 0;
+	$self->set_perm($mode);
+	$self->set_ugid($uid, $gid);
+	$self->set_size($size);
+	$self->set_amtime($atime, $mtime);
+	return $self;
+    }
+    return undef;
+}
+
+sub new_from_buffer {
+    my ($class, $buf) = @_;
+    my $self = $class->new;
+
+    $self->{flags} = $buf->get_int32;
+
+    if ($self->{flags} & SSH2_FILEXFER_ATTR_SIZE) {
+	$self->{size} = $buf->get_int64;
     }
 
-    if (my $stat = $param{Stat}) {
-        $a->{flags} |= SSH2_FILEXFER_ATTR_SIZE;
-        $a->{size} = $stat->[7];
-        $a->{flags} |= SSH2_FILEXFER_ATTR_UIDGID;
-        $a->{uid} = $stat->[4];
-        $a->{gid} = $stat->[5];
-        $a->{flags} |= SSH2_FILEXFER_ATTR_PERMISSIONS;
-        $a->{perm} = $stat->[2];
-        $a->{flags} |= SSH2_FILEXFER_ATTR_ACMODTIME;
-        $a->{atime} = $stat->[8];
-        $a->{mtime} = $stat->[9];
+    if ($self->{flags} & SSH2_FILEXFER_ATTR_UIDGID) {
+	$self->{uid} = $buf->get_int32;
+	$self->{gid} = $buf->get_int32;
     }
-    elsif (my $buf = $param{Buffer}) {
-        $a->{flags} = $buf->get_int32;
-        if ($a->{flags} & SSH2_FILEXFER_ATTR_SIZE) {
-            $a->{size} = $buf->get_int64;
-        }
-        if ($a->{flags} & SSH2_FILEXFER_ATTR_UIDGID) {
-            $a->{uid} = $buf->get_int32;
-            $a->{gid} = $buf->get_int32;
-        }
-        if ($a->{flags} & SSH2_FILEXFER_ATTR_PERMISSIONS) {
-            $a->{perm} = $buf->get_int32;
-        }
-        if ($a->{flags} & SSH2_FILEXFER_ATTR_ACMODTIME) {
-            $a->{atime} = $buf->get_int32;
-            $a->{mtime} = $buf->get_int32;
-        }
+
+    if ($self->{flags} & SSH2_FILEXFER_ATTR_PERMISSIONS) {
+	$self->{perm} = $buf->get_int32;
     }
-    $a;
+
+    if ($self->{flags} & SSH2_FILEXFER_ATTR_ACMODTIME) {
+	$self->{atime} = $buf->get_int32;
+	$self->{mtime} = $buf->get_int32;
+    }
+
+    $self;
 }
 
 sub as_buffer {
@@ -74,6 +75,78 @@ sub as_buffer {
     $buf;
 }
 
+sub flags { shift->{flags} }
+
+sub size { shift->{size} }
+
+sub set_size {
+    my ($self, $size) = @_;
+    if (defined $size) {
+	$self->{flags} |= SSH2_FILEXFER_ATTR_SIZE;
+	$self->{size} = $size;
+    }
+    else {
+	$self->{flags} &= ~SSH2_FILEXFER_ATTR_SIZE;
+	delete $self->{size}
+    }
+}
+
+sub uid { shift->{uid} }
+
+sub gid { shift->{gid} }
+
+sub set_ugid {
+    my ($self, $uid, $gid) = @_;
+    if (defined $uid and defined $gid) {
+	$self->{flags} |= SSH2_FILEXFER_ATTR_UIDGID;
+	$self->{uid} = $uid;
+	$self->{gid} = $gid;
+    }
+    elsif (!defined $uid and !defined $gid) {
+	$self->{flags} &= ~SSH2_FILEXFER_ATTR_UIDGID;
+	delete $self->{uid};
+	delete $self->{gid};
+    }
+    else {
+	croak "wrong arguments for set_ugid"
+    }
+}
+
+sub perm { shift->{perm} }
+
+sub set_perm {
+    my ($self, $perm) = @_;
+    if (defined $perm) {
+	$self->{flags} |= SSH2_FILEXFER_ATTR_PERMISSIONS;
+	$self->{perm} = $perm;
+    }
+    else {
+	$self->{flags} &= ~SSH2_FILEXFER_ATTR_PERMISSIONS;
+	delete $self->{perm}
+    }
+}
+
+sub atime { shift->{atime} }
+
+sub mtime { shift->{mtime} }
+
+sub set_amtime {
+    my ($self, $atime, $mtime) = @_;
+    if (defined $atime and defined $mtime) {
+	$self->{flags} |= SSH2_FILEXFER_ATTR_ACMODTIME;
+	$self->{atime} = $atime;
+	$self->{mtime} = $mtime;
+    }
+    elsif (!defined $atime and !defined $mtime) {
+	$self->{flags} &= ~SSH2_FILEXFER_ATTR_ACMODTIME;
+	delete $self->{atime};
+	delete $self->{mtime};
+    }
+    else {
+	croak "wrong arguments for set_amtime"
+    }
+}
+
 1;
 __END__
 
@@ -83,9 +156,17 @@ Net::SFTP::Foreign::Attributes - File/directory attribute container
 
 =head1 SYNOPSIS
 
-    use Net::SFTP::Foreign::Attributes;
-    my $attrs = Net::SFTP::Foreign::Attributes->new(Stat => [ stat "foo" ]);
-    my $size = $attrs->size;
+    use Net::SFTP::Foreign;
+
+    my $a1 = Net::SFTP::Foreign::Attributes->new();
+    $a1->set_size($size);
+    $a1->set_ugid($uid, $gid);
+
+    my $a2 = $sftp->stat($file)
+        or die "remote stat command failed: ".$sftp->status;
+
+    my $size = $a2->size;
+    my $mtime = $a2->mtime;
 
 =head1 DESCRIPTION
 
@@ -96,69 +177,79 @@ I<Net::SFTP::Foreign::Buffer> objects.
 
 =head1 USAGE
 
-=head2 Net::SFTP::Foreign::Attributes->new( [ %args ] )
-
-Constructs a new I<Net::SFTP::Foreign::Attributes> object and returns
-that object.
-
-I<%args> is optional; if not provided the object will be initialized
-with the default values. If provided, I<%args> can contain:
-
 =over 4
 
-=item * Stat
+=item Net::SFTP::Foreign::Attributes-E<gt>new()
 
-A reference to the return value of the built-in I<stat> function. The
-values in the I<Net::SFTP::Foreign::Attributes> object will be
-initialized from the values in the I<stat> array, and the flags will
-be set appropriately.
+Returns a new C<Net::SFTP::Foreign::Attributes> object.
 
-=item * Buffer
+=item Net::SFTP::Foreign::Attributes-E<gt>new_from_buffer($buffer)
 
-A I<Net::SFTP::Foreign::Buffer> object containing a serialized
-attribute object. The I<Net::SFTP::Foreign::Attributes> object will be
-initialized from the values in the serialized string, and flags will
-be set appropriately.
+Creates a new attributes object and populates it with information read
+from C<$buffer>.
+
+=item $attrs-E<gt>as_buffer
+
+Serializes the I<Attributes> object I<$attrs> into a buffer object.
+
+=item $attrs-E<gt>flags
+
+returns the value of the flags field.
+
+=item $attrs-E<gt>size
+
+returns the values of the size field or undef if it is not set.
+
+=item $attrs-E<gt>uid
+
+returns the value of the uid field or undef if it is not set.
+
+=item $attrs-E<gt>gid
+
+returns the value of the gid field or undef if it is not set.
+
+=item $attrs-E<gt>perm
+
+returns the value of the permissions field or undef if it is not set.
+
+=item $attrs-E<gt>atime
+
+returns the value of the atime field or undef if it is not set.
+
+=item $attrs-E<gt>mtime
+
+returns the value of the mtime field or undef if it is not set.
+
+=item $attrs-E<gt>set_size($size)
+
+sets the value of the size field, or if $size is undef removes the
+field. The flags field is adjusted accordingly.
+
+=item $attrs-E<gt>set_perm($perm)
+
+sets the value of the permsissions field or removes it if the value is
+undefined. The flags field is also adjusted.
+
+=item $attr-E<gt>set_ugid($uid, $gid)
+
+sets the values of the uid and gid fields, or removes them if they are
+undefined values. The flags field is adjusted.
+
+This pair of fields can not be set separatelly because they share the
+same bit on the flags field and so both have to be set or not.
+
+=item $attr-E<gt>set_amtime($atime, $mtime)
+
+sets the values of the atime and mtime fields or remove them if they
+are undefined values. The flags field is also adjusted.
 
 =back
 
-=head2 $attrs->as_buffer
+=head1 COPYRIGHT
 
-Serializes the I<Attributes> object I<$attrs> into string form, using
-the flags in the object to determine what fields get placed in the
-buffer. Returns a I<Net::SFTP::Foreign::Buffer> object.
+Copyright (c) 2006 Salvador FandiE<ntilde>o.
 
-=head2 $attrs->flags( [ $value ] )
-
-Get/set the value of the flags in I<$attrs>.
-
-=head2 $attrs->size( [ $value ] )
-
-Get/set the value of the file size (in bytes) in I<$attrs>.
-
-=head2 $attrs->uid( [ $value ] )
-
-Get/set the value of the UID in I<$attrs>.
-
-=head2 $attrs->gid( [ $value ] )
-
-Get/set the value of the GID in I<$attrs>.
-
-=head2 $attrs->perm( [ $value ] )
-
-Get/set the value of the permissions in I<$attrs>.
-
-=head2 $attrs->atime( [ $value ] )
-
-Get/set the value of the last access time (atime) in I<$attrs>.
-
-=head2 $attrs->mtime( [ $value ] )
-
-Get/set the value of the last modified time (mtime) in I<$attrs>.
-
-=head1 AUTHOR & COPYRIGHTS
-
-Please see the Net::SFTP::Foreign manpage for author, copyright, and
-license information.
+All rights reserved.  This program is free software; you can
+redistribute it and/or modify it under the same terms as Perl itself.
 
 =cut
