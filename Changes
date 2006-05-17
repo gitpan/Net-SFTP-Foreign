@@ -1,49 +1,23 @@
 Revision history for Net::SFTP::Foreign
 
-0.90_09 Apr 25 2006
-	- bug on _do_io method corrected
+0.61  May 17 2006
+        - 0 is a valid handle (bug reported by John R. Makosky).
 
-0.90_08 Apr 24 2006
-	- bug for copy_perms => 0 corrected (reported by Erik
-	  Johansen).
-	- usage checks added to most commands.
-
-0.90_07 Apr 23 2006
+0.60  Apr 23 2006
 	- don't use pack for quads on little-endian systems (bug
 	  reported by Mogens Hafsjold)
 
-0.90_06 Feb 24 2006
-	- implement rput
-	- use Win32::Socketpair on Windows
-	- implement API for local fs in Local
-	- move common functions to Common and Helpers packages
+0.59  Mar 14 2006
+	- on Solaris, closing ssh pipes doesn't terminate
+	  the slave process (bug report and lots of help
+	  troubleshooting it by Colin Campbell).
 
-0.90_05 Feb 23 2006
-	- convert remote file handle strings to tied file handles
-	- most methods changed to mimic perl buil-ins
-	- attach file position to file handles.
-
-0.90_04 Feb 22 2006
-	- remove bug in get that could left remote file handles open
-	- new methods readlink, symlink, rremove, rget.
-
-0.90_03 Feb 21 2006
-	- minor corrections to the docs
-	- new methods glob and join implemented.
-
-0.90_02 Feb 20 2006
-	- added new method find
-	- ls method expanded with callback
-	- contructor rewritten
-	- better docs for Constants package
-	- Compat module updated
-	- several corrections on the docs
-	
-0.90_01 Feb 16 2006
-	- almost full rewrite exposing new much improved and
-	  incompatible API!!!
-
---------------------------------------------------------------------------
+0.58  Feb 16 2006
+	- obsolete current interface, request developers to go for
+	  Net::SFTP::Foreign::Compat, or upgrado to the development
+	  version.
+	- kill ssh only on Windows machines. On Unix, just closing IO
+	  should do.
 
 0.57  Nov 29 2005
 	- check sysread return value when reading from pipe (bug

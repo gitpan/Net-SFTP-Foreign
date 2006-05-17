@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign::Buffer;
 
-our $VERSION = '0.90_07';
+our $VERSION = '0.60';
 
 use strict;
 use warnings;
@@ -62,7 +62,7 @@ sub get_str {
 }
 
 
-sub get_attributes { Net::SFTP::Foreign::Attributes->new_from_buffer($_[0]) }
+sub get_attributes { Net::SFTP::Foreign::Attributes->new(Buffer => $_[0]) }
 
 
 sub put_int8 { ${$_[0]} .= pack(C => $_[1]) }
