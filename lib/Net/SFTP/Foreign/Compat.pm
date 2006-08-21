@@ -1,29 +1,32 @@
 package Net::SFTP::Foreign::Compat;
 
-our $VERSION = '0.03';
+our $VERSION = '0.04';
 
 use warnings;
 use strict;
 use Carp;
 
-use Net::SFTP::Foreign;
+require Net::SFTP::Foreign;
+require Net::SFTP::Foreign::Constants;
+require Net::SFTP::Foreign::Attributes::Compat;
+
 our @ISA = qw(Net::SFTP::Foreign);
 
-my $suplant;
+my $supplant;
 
 sub import {
     for my $arg (@_[1..$#_]) {
-	if ($arg eq ':suplant') {
-	    if (!$suplant) {
-		$suplant = 1;
+	if ($arg eq ':supplant') {
+	    if (!$supplant) {
+		$supplant = 1;
 
 		@Net::SFTP::ISA = qw(Net::SFTP::Foreign::Compat);
-		@Net::SFTP::Attributes::ISA = qw(Net::SFTP::Foreign::Compat::Attributes);
-		@Net::SFTP::Constant::ISA = qw(Net::SFTP::Foreign::Constant);
+		@Net::SFTP::Attributes::ISA = qw(Net::SFTP::Foreign::Attributes::Compat);
+		@Net::SFTP::Constant::ISA = qw(Net::SFTP::Foreign::Constants);
 
-		$INC{Net::SFTP} = $INC{Net::SFTP::Foreign::Compat};
-		$INC{Net::SFTP::Attributes} = $INC{Net::SFTP::Foreign::Compat};
-		$INC{Net::SFTP::Constants} = $INC{Net::SFTP::Foreign::Constants};
+		$INC{q(Net::SFTP)} = $INC{q(Net::SFTP::Foreign::Compat)};
+		$INC{q(Net::SFTP::Attributes)} = $INC{q(Net::SFTP::Foreign::Compat)};
+		$INC{q(Net::SFTP::Constants)} = $INC{q(Net::SFTP::Foreign::Compat)};
 	    }
 	}
 	else {
@@ -157,7 +160,7 @@ sub _gen_do_and_status {
 sub _rebless_attrs {
     my $a = shift;
     if ($a) {
-	bless $a,  ( $suplant
+	bless $a,  ( $supplant
 		     ? "Net::SFTP::Attributes"
 		     : "Net::SFTP::Foreign::Attributes::Compat" );
     }
@@ -198,7 +201,7 @@ Net::SFTP::Foreign::Compat - Adaptor for Net::SFTP compatibility
     $sftp->get("foo", "bar");
     $sftp->put("bar", "baz");
 
-    use Net::SFTP::Foreign::Compat ':suplant';
+    use Net::SFTP::Foreign::Compat ':supplant';
     my $sftp = Net::SFTP->new($host);
 
 =head1 DESCRIPTION
@@ -210,7 +213,7 @@ Methods on this package are identical to those in L<Net::SFTP> except
 that L<Net::SFTP::Foreign::Attributes::Compat> objects have to be used
 instead of L<Net::SFTP::Attributes>.
 
-If the C<:suplant> tag is used, this module installs also wrappers on
+If the C<:supplant> tag is used, this module installs also wrappers on
 the C<Net::SFTP> and L<Net::SFTP::Attributes> packages so no other
 parts of the program have to modified in order to move from Net::SFTP
 to Net::SFTP::Foreign.

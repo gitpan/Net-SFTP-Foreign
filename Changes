@@ -1,5 +1,17 @@
 Revision history for Net::SFTP::Foreign
 
+0.90_12 Aug 21 2006
+        - syntax error on Net::SFTP::Foreign::Compat corrected
+          (reported by Hans Schligtenhorst).
+        - supplant was misspelled
+        - correct some dependency problems on Compat.
+        - add test for Compat.
+
+0.90_11 Jun 30 2006
+        - don't croak from connect on runtime errors
+        - workaround bug in IPC::Open3 that leaves two processes
+          running
+
 0.90_10 May 17 2006
         - 0 is a valid sftp handler.
 

@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '0.90_10';
+our $VERSION = '0.90_12';
 
 use strict;
 use warnings;
@@ -238,8 +238,17 @@ sub new {
 	$sftp->{ssh_out} = $socket;
     }
     else {
-	$sftp->{pid} = open2($sftp->{ssh_in}, $sftp->{ssh_out}, @open2_cmd)
-	    or croak "running '@_' failed ($!)";
+        my $pid = $$;
+	$sftp->{pid} = eval { open2($sftp->{ssh_in}, $sftp->{ssh_out}, @open2_cmd) };
+        if ($pid != $$) { # that's to workaround a bug in IPC::Open3:
+            require POSIX;
+            POSIX::_exit(-1);
+        }
+        unless (defined $sftp->{pid}) {
+            $sftp->_set_status(SSH2_FX_NO_CONNECTION);
+            $sftp->_set_error(SFTP_ERR_BAD_SSH_BINARY, "Bad ssh command: $!");
+            return $sftp;
+        }
 
 	for my $dir (qw(ssh_in ssh_out)) {
 	    my $flags = fcntl($sftp->{$dir}, F_GETFL, 0);
@@ -2431,7 +2440,7 @@ the copied file. Default is to use the umask for the current process.
 
 =item perm =E<gt> $perm
 
-sets the permision mask of the file to be $perm, umask and remote
+sets the permision mask of the file to be $perm, umask and local
 permissions are ignored.
 
 =item block_size =E<gt> $bytes
