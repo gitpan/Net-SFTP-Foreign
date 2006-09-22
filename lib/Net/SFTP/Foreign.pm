@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '0.90_12';
+our $VERSION = '0.90_13';
 
 use strict;
 use warnings;
@@ -1167,6 +1167,8 @@ sub get {
     my $lumask = ~$perm & 0666;
     umask $lumask;
 
+    unlink $local;
+
     unless (CORE::open $fh, ">", $local) {
 	umask $oldumask;
 	$sftp->_set_error(SFTP_ERR_LOCAL_OPEN_FAILED,
@@ -1181,7 +1183,10 @@ sub get {
     # this optimization removed because it doesn't work for already
     # existant files :-(
 
-    unless (chmod $perm & $numask, $fh) {
+    # unless (chmod $perm & $numask, $fh) {
+    # fchmod is not available everywhere!
+
+    unless (chmod $perm & $numask, $local) {
 	$sftp->_set_error(SFTP_ERR_LOCAL_CHMOD_FAILED,
 			  "Can't chmod $local: $!");
 	return undef

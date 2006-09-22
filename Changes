@@ -1,5 +1,9 @@
 Revision history for Net::SFTP::Foreign
 
+0.90_13 Sep 22 2006
+        - fchmod is not available everywhere, don't use it (bug and
+          solution reported by Andre Tomt).
+
 0.90_12 Aug 21 2006
         - syntax error on Net::SFTP::Foreign::Compat corrected
           (reported by Hans Schligtenhorst).
