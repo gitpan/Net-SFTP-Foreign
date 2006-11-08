@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign::Compat;
 
-our $VERSION = '0.04';
+our $VERSION = '0.05';
 
 use warnings;
 use strict;
@@ -17,6 +17,7 @@ my $supplant;
 sub import {
     for my $arg (@_[1..$#_]) {
 	if ($arg eq ':supplant') {
+            # print STDERR "suplanting Net::SFTP...\n";
 	    if (!$supplant) {
 		$supplant = 1;
 
@@ -24,9 +25,10 @@ sub import {
 		@Net::SFTP::Attributes::ISA = qw(Net::SFTP::Foreign::Attributes::Compat);
 		@Net::SFTP::Constant::ISA = qw(Net::SFTP::Foreign::Constants);
 
-		$INC{q(Net::SFTP)} = $INC{q(Net::SFTP::Foreign::Compat)};
-		$INC{q(Net::SFTP::Attributes)} = $INC{q(Net::SFTP::Foreign::Compat)};
-		$INC{q(Net::SFTP::Constants)} = $INC{q(Net::SFTP::Foreign::Compat)};
+		$INC{q(Net/SFTP.pm)} = $INC{q(Net/SFTP/Foreign/Compat.pm)};
+		$INC{q(Net/SFTP/Attributes.pm)} = $INC{q(Net/SFTP/Foreign/Compat.pm)};
+		$INC{q(Net/SFTP/Constants.pm)} = $INC{q(Net/SFTP/Foreign/Compat.pm)};
+
 	    }
 	}
 	else {

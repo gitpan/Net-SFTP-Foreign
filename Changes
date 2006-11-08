@@ -1,5 +1,9 @@
 Revision history for Net::SFTP::Foreign
 
+0.90_14 Nov 8 2006
+        - FAQ section added on the module documentation
+        - Net::SFTP supplant was not working, corrected
+
 0.90_13 Sep 22 2006
         - fchmod is not available everywhere, don't use it (bug and
           solution reported by Andre Tomt).

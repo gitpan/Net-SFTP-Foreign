@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '0.90_13';
+our $VERSION = '0.90_14';
 
 use strict;
 use warnings;
@@ -3010,6 +3010,38 @@ Returns the target path on success and undef on failure.
 
 Sends a C<SSH_FXP_SYMLINK> command to create a new symbolic link
 C<$path> pointing to C<$target>.
+
+=back
+
+=head1 FAQ
+
+=over 4
+
+=item Using Net::SFTP::Foreign from a cron script:
+
+B<Q>: I wrote a script for performing sftp file transfers that works
+beautifully from the command line. However when I try to run the same
+script from cron it fails with a broken pipe error:
+
+  open2: exec of ssh -l user some.location.com -s sftp
+    failed at Net/SFTP/Foreign.pm line 67
+
+B<A>: C<ssh> is not on your cron PATH.
+
+The remedy is either to add the location of the C<ssh> application to
+your cron PATH or to use the C<ssh_cmd> option on the C<new> method to
+hardcode the location of C<ssh> inside your script, for instance:
+
+  my $ssh = Net::SFTP::Foreign->new($host,
+                                    ssh_cmd => '/usr/local/ssh/bin/ssh');
+
+=item Login/password authentication:
+
+B<Q>: I noticed that the examples/synopsis that is provided has no
+mention of using a password to login. How is one, able to login to a
+SFTP server that requires uid/pwd for login?
+
+B<A>: You can't!
 
 =back
 
