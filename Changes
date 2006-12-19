@@ -1,5 +1,11 @@
 Revision history for Net::SFTP::Foreign
 
+0.90_15 Dec 19 2006
+        - messages were not being queued on get method and so,
+          performance was very bad (reported by "sched" via
+          Perlmonks).
+        - Auto reduce block size on get method.
+
 0.90_14 Nov 8 2006
         - FAQ section added on the module documentation
         - Net::SFTP supplant was not working, corrected

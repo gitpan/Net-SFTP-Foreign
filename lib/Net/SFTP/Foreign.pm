@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '0.90_14';
+our $VERSION = '0.90_15';
 
 use strict;
 use warnings;
@@ -1197,11 +1197,13 @@ sub get {
     my $loff = 0;
     my $rfno = fileno($sftp->{ssh_in});
     my $selin = '';
+    my $n = 0;
+
     vec ($selin, $rfno, 1) = 1;
 
     while (1) {
 	# request a new block if queue is not full
-	while (!@msgid or ($size <= $askoff and @msgid < $queue_size)) {
+	while (!@msgid or ($size > $askoff and @msgid < $queue_size and $n != 1)) {
 
 	    my $id = $sftp->_queue_new_msg(SSH2_FXP_READ, str=> $rfid,
 					   int64 => $askoff, int32 => $block_size);
@@ -1209,7 +1211,10 @@ sub get {
 	    push @msgid, $id;
 	    push @askoff, $askoff;
 	    $askoff += $block_size;
+            $n++;
 	}
+
+        # printf STDERR "queue_size: %d, askoff: %d, bs: %d \r", scalar(@msgid), $askoff, $block_size;
 
 	my $eid = shift @msgid;
 	my $roff = shift @askoff;
@@ -1235,7 +1240,10 @@ sub get {
 	}
 
 	$loff += $len;
-	$askoff = $loff if $len < $block_size;
+        if ($len < $block_size) {
+          $block_size = $len < 2048 ? 2048 : $len;
+          $askoff = $loff;
+        }
 
 	if (defined $cb) {
 	    $size = $loff if $loff > $size;
