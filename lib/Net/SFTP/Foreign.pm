@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '0.90_15';
+our $VERSION = '0.90_16';
 
 use strict;
 use warnings;
@@ -45,6 +45,8 @@ use constant COPY_SIZE => 16384;
 
 sub _next_msg_id { shift->{_msg_id}++ }
 
+use constant _empty_attributes => Net::SFTP::Foreign::Attributes->new;
+
 sub _queue_new_msg {
     my $sftp = shift;
     my $code = shift;
@@ -66,10 +68,8 @@ sub _queue_msg {
 		       $len, unpack(CN => $bytes)));
     }
 
-    else {
-	$sftp->{_bout} .= pack('N', length($bytes));
-	$sftp->{_bout} .= $bytes;
-    }
+    $sftp->{_bout} .= pack('N', length($bytes));
+    $sftp->{_bout} .= $bytes;
 }
 
 sub _sysreadn {
@@ -874,12 +874,13 @@ sub fstat {
     return undef;
 }
 
-sub _gen_simple_method {
+## SSH2_FXP_RMDIR (15), SSH2_FXP_REMOVE (13)
+# these return true on success, undef on failure
+
+sub _gen_remove_method {
     my($code, $error, $errstr) = @_;
     return sub {
-
-	(@_ >= 2 and @_ <= 3)
-	    or croak 'Usage: $sftp->some_method($str [, $attrs])';
+	@_ == 2 or croak 'Usage: $sftp->some_method($str)';
 
         my $sftp = shift;
         my $id = $sftp->_queue_str_request($code, @_);
@@ -887,50 +888,66 @@ sub _gen_simple_method {
     };
 }
 
-## SSH2_FXP_MKDIR (14), SSH2_FXP_RMDIR (15),
-## SSH2_FXP_SETSTAT (9), SSH2_FXP_REMOVE (13),
-# these return true on success, undef on failure
-*remove = _gen_simple_method(SSH2_FXP_REMOVE,
+*remove = _gen_remove_method(SSH2_FXP_REMOVE,
 			     SFTP_ERR_REMOTE_REMOVE_FAILED,
 			     "Couldn't delete remote file");
 
-*mkdir = _gen_simple_method(SSH2_FXP_MKDIR,
-			    SFTP_ERR_REMOTE_MKDIR_FAILED,
-			    "Couldn't create remote directory");
-
-*rmdir = _gen_simple_method(SSH2_FXP_RMDIR,
+*rmdir = _gen_remove_method(SSH2_FXP_RMDIR,
 			    SFTP_ERR_REMOTE_RMDIR_FAILED,
 			    "Couldn't remove remote directory");
 
-*setstat = _gen_simple_method(SSH2_FXP_SETSTAT,
-			      SFTP_ERR_REMOTE_SETSTAT_FAILED,
-			      "Couldn't setstat remote file (setstat)'");
 
-sub _gen_file_method {
-    my($code, $error, $errstr) = @_;
-    return sub {
+## SSH2_FXP_MKDIR (14), SSH2_FXP_SETSTAT (9)
+# these return true on success, undef on failure
 
-	(@_ >= 2 and @_ <= 3)
-	    or croak 'Usage: $sftp->some_method($fh [, $attrs])';
+sub mkdir {
+    (@_ >= 2 and @_ <= 3)
+        or croak 'Usage: $sftp->mkdir($str [, $attrs])';
 
-        my $sftp = shift;
-        my $id = $sftp->_queue_rid_request($code, @_);
-	defined $id or return undef;
+    my ($sftp, $name, $attrs) = @_;
+    $attrs = _empty_attributes unless defined $attrs;
+    my $id = $sftp->_queue_str_request(SSH2_FXP_MKDIR, $name, $attrs);
+    return $sftp->_check_status_ok($id,
+                                   SFTP_ERR_REMOTE_MKDIR_FAILED,
+                                   "Couldn't create remote directory");
+}
 
-        return $sftp->_check_status_ok($id, $error, $errstr);
-    };
+sub setstat {
+    @_ == 3 or croak 'Usage: $sftp->setstat($str, $attrs)';
+
+    my ($sftp, $name, $attrs) = @_;
+    my $id = $sftp->_queue_str_request(SSH2_FXP_SETSTAT, $name, $attrs);
+    return $sftp->_check_status_ok($id,
+                                   SFTP_ERR_REMOTE_SETSTAT_FAILED,
+                                   "Couldn't setstat remote file (setstat)'");
 }
 
 ## SSH2_FXP_CLOSE (4), SSH2_FXP_FSETSTAT (10)
 # these return true on success, undef on failure
 
-*fsetstat = _gen_file_method(SSH2_FXP_FSETSTAT,
-			     SFTP_ERR_REMOTE_FSETSTAT_FAILED,
-			     "Couldn't setstat remote file (fsetstat)");
+sub fsetstat {
+    @_ == 3 or croak 'Usage: $sftp->fsetstat($fh, $attrs)';
 
-*_close = _gen_file_method(SSH2_FXP_CLOSE,
-			   SFTP_ERR_REMOTE_CLOSE_FAILED,
-			   "Couldn't close remote file");
+    my $sftp = shift;
+    my $id = $sftp->_queue_rid_request(SSH2_FXP_FSETSTAT, @_);
+    defined $id or return undef;
+
+    return $sftp->_check_status_ok($id,
+                                   SFTP_ERR_REMOTE_FSETSTAT_FAILED,
+                                   "Couldn't setstat remote file (fsetstat)");
+}
+
+sub _close {
+    @_ == 2 or croak 'Usage: $sftp->close($fh, $attrs)';
+
+    my $sftp = shift;
+    my $id = $sftp->_queue_rid_request(SSH2_FXP_CLOSE, @_);
+    defined $id or return undef;
+
+    return $sftp->_check_status_ok($id,
+                                   SFTP_ERR_REMOTE_CLOSE_FAILED,
+                                   "Couldn't close remote file");
+}
 
 sub close {
 
@@ -1707,7 +1724,7 @@ sub rget {
 				 return 1;
 			     }
 			     else {
-				 if (mkdir $lpath, ($copy_perms ? $e->{a}->perm & 0777 : 0777)) {
+				 if (CORE::mkdir $lpath, ($copy_perms ? $e->{a}->perm & 0777 : 0777)) {
 				     $count++;
 				     return 1;
 				 }
@@ -2275,8 +2292,10 @@ failure and a true value or the requested data on
 success. C<$sftp-E<gt>error> can be used to check explicitly for an
 error after every method call.
 
-Inside any method, a low-level network error (for instance, a broken
-SSH onnection) will cause the method to die.
+Incompatible change from earlier versions: low-level network errors (as
+for instance, broken SSH connections) do *not* cause methods to die
+anymore. Now they are handled as other errors, returning undef and
+setting C<$sftp-E<gt>error>.
 
 =over 4
 
@@ -3084,11 +3103,11 @@ L<Net::SSH2>.
 
 =head1 COPYRIGHT
 
-Copyright (c) 2005, 2006 Salvador FandiE<ntilde>o.
+Copyright (c) 2005-2007 Salvador FandiE<ntilde>o.
 
 Copyright (c) 2001 Benjamin Trott, Copyright (c) 2003 David Rolsky.
 
-_glob_to_regex method based on code (C) 2002 Richard Clamp.
+_glob_to_regex method based on code (c) 2002 Richard Clamp.
 
 All rights reserved.  This program is free software; you can
 redistribute it and/or modify it under the same terms as Perl itself.

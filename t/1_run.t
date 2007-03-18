@@ -106,7 +106,7 @@ plan skip_all => "tests not supported on inferior OS"
 plan skip_all => "sftp-server not found"
     unless defined $sscmd;
 
-plan tests => 256;
+plan tests => 267;
 
 use_ok('Net::SFTP::Foreign');
 use Net::SFTP::Foreign::Constants qw(:flags);
@@ -137,6 +137,9 @@ my $dlfn1 = File::Spec->catfile($lcwd, 'data1.l');
 my $drfn = File::Spec->catfile($rcwd, 'data.r');
 my $drfn_l = File::Spec->catfile($lcwd, 'data.r');
 
+my $drdir_l = File::Spec->catdir($lcwd, 'testdir');
+my $drdir = File::Spec->catdir($rcwd, 'testdir');
+
 for my $i (1..8) {
     mktestfile($dlfn, $i * 4000,
 	       "this is just testing data... foo bar doz wahtever... ");
@@ -162,6 +165,32 @@ for my $i (1..8) {
     unlink $dlfn1;
     unlink $drfn_l;
 }
+
+# mkdir and rmdir
+
+rmdir $drdir_l;
+
+ok($sftp->mkdir($drdir), "mkdir 1");
+ok((-d $drdir_l), "mkdir 2");
+ok($sftp->rmdir($drdir), "rmdir 1");
+ok(!(-d $drdir_l), "rmdir 2");
+
+my $attr = Net::SFTP::Foreign::Attributes->new;
+$attr->set_perm(0700);
+
+ok($sftp->mkdir($drdir, $attr), "mkdir 3");
+ok((-d $drdir_l), "mkdir 4");
+
+my @stat = stat $drdir_l;
+is($stat[2] & 0777, 0700, "mkdir 5");
+
+$attr->set_perm(0770);
+ok($sftp->setstat($drdir, $attr), "setstat 1");
+@stat = stat $drdir_l;
+is($stat[2] & 0777, 0770, "setstat 2");
+
+ok($sftp->rmdir($drdir), "rmdir 3");
+ok(!(-d $drdir_l), "rmdir 4");
 
 # reconnect
 $sftp = eval { Net::SFTP::Foreign->new(@new_args) };

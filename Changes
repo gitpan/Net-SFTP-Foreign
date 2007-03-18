@@ -1,5 +1,14 @@
 Revision history for Net::SFTP::Foreign
 
+0.90_16 Mar 18, 2007
+        - new tests added
+        - mkdir, rmdir, remove, setstat, fsetstat and _close methods
+          argument parsing was wrong (bug #25101 reported by
+          funkonaut)
+        - wrong detection of Sort::Key corrected
+        - debug mode was broken
+        - network errors do not die anymore, documented
+
 0.90_15 Dec 19 2006
         - messages were not being queued on get method and so,
           performance was very bad (reported by "sched" via

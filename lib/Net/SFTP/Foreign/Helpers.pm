@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign::Helpers;
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 use strict;
 use warnings;
@@ -21,7 +21,7 @@ sub _do_nothing {}
     sub _has_sk {
 	unless (defined $has_sk) {
 	    eval { require Sort::Key };
-	    $has_sk = ($@ ne '');
+	    $has_sk = ($@ eq '');
 	}
 	return $has_sk;
     }
