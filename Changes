@@ -1,5 +1,9 @@
 Revision history for Net::SFTP::Foreign
 
+0.90_17 Mar 21, 2007 
+        - add support for dont_save flag in get method, required for
+          Compat module (bug reported by Jamie Lahowetz).
+
 0.90_16 Mar 18, 2007
         - new tests added
         - mkdir, rmdir, remove, setstat, fsetstat and _close methods

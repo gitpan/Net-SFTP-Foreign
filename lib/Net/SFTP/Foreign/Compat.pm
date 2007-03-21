@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign::Compat;
 
-our $VERSION = '0.05';
+our $VERSION = '0.90_17';
 
 use warnings;
 use strict;
@@ -82,7 +82,7 @@ sub get {
     my @content;
 
     $sftp->SUPER::get($remote, $local,
-		      dontsave => !defined($remote),
+		      dont_save => !defined($local),
 		      callback => sub {
 			  my ($sftp, $data, $off, $size) = @_;
 			  $cb->($sftp, $data, $off, $size) if $cb;

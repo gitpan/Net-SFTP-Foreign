@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '0.90_16';
+our $VERSION = '0.90_17';
 
 use strict;
 use warnings;
@@ -1128,6 +1128,7 @@ sub get {
     my $overwrite = delete $opts{overwrite};
     my $block_size = delete $opts{block_size} || $sftp->{_block_size};
     my $queue_size = delete $opts{queue_size} || $sftp->{_queue_size};
+    my $dont_save = delete $opts{dont_save};
 
     my $oldumask = umask;
 
@@ -1166,47 +1167,49 @@ sub get {
     my $fh;
     my @msgid;
 
-    if (!$overwrite and -e $local) {
-	$sftp->_set_error(SFTP_ERR_LOCAL_ALREADY_EXISTS,
-			  "local file $local already exists");
-	return undef
-    }
+    unless ($dont_save) {
+        if (!$overwrite and -e $local) {
+            $sftp->_set_error(SFTP_ERR_LOCAL_ALREADY_EXISTS,
+                              "local file $local already exists");
+            return undef
+        }
 	
-    if ($copy_perms) {
-	my $aperm = $a->perm;
-	$perm = 0666 unless defined $perm;
-	$a->perm =~ /^(\d+)$/ or die "perm is not numeric";
-	$perm = int $1;
-    }
+        if ($copy_perms) {
+            my $aperm = $a->perm;
+            $perm = 0666 unless defined $perm;
+            $a->perm =~ /^(\d+)$/ or die "perm is not numeric";
+            $perm = int $1;
+        }
 
-    $perm = (0666 & $numask) unless defined $perm;
+        $perm = (0666 & $numask) unless defined $perm;
 
-    my $lumask = ~$perm & 0666;
-    umask $lumask;
+        my $lumask = ~$perm & 0666;
+        umask $lumask;
 
-    unlink $local;
+        unlink $local;
 
-    unless (CORE::open $fh, ">", $local) {
-	umask $oldumask;
-	$sftp->_set_error(SFTP_ERR_LOCAL_OPEN_FAILED,
-			  "Can't open $local: $!");
-	return undef;
-    }
-    umask $oldumask;
+        unless (CORE::open $fh, ">", $local) {
+            umask $oldumask;
+            $sftp->_set_error(SFTP_ERR_LOCAL_OPEN_FAILED,
+                              "Can't open $local: $!");
+            return undef;
+        }
+        umask $oldumask;
 
-    binmode $fh;
+        binmode $fh;
 
-    # if ((0666 & ~$lumask) != $perm) { ...
-    # this optimization removed because it doesn't work for already
-    # existant files :-(
+        # if ((0666 & ~$lumask) != $perm) { ...
+        # this optimization removed because it doesn't work for already
+        # existant files :-(
 
-    # unless (chmod $perm & $numask, $fh) {
-    # fchmod is not available everywhere!
+        # unless (chmod $perm & $numask, $fh) {
+        # fchmod is not available everywhere!
 
-    unless (chmod $perm & $numask, $local) {
-	$sftp->_set_error(SFTP_ERR_LOCAL_CHMOD_FAILED,
-			  "Can't chmod $local: $!");
-	return undef
+        unless (chmod $perm & $numask, $local) {
+            $sftp->_set_error(SFTP_ERR_LOCAL_CHMOD_FAILED,
+                              "Can't chmod $local: $!");
+            return undef
+        }
     }
 
     my @askoff;
@@ -1267,39 +1270,43 @@ sub get {
 	    $cb->($sftp, $data, $roff, $size);
 	}
 
-	unless (print $fh $data) {
-	    $sftp->_set_error(SFTP_ERR_LOCAL_WRITE_FAILED,
-			      "unable to write data to local file $local: $!");
-	    last;
-	}
+        unless ($dont_save) {
+            unless (print $fh $data) {
+                $sftp->_set_error(SFTP_ERR_LOCAL_WRITE_FAILED,
+                                  "unable to write data to local file $local: $!");
+                last;
+            }
+        }
     }
 
     $sftp->_get_msg for (@msgid);
 
     return undef if $sftp->error;
 
-    unless (CORE::close $fh) {
-	$sftp->_set_error(SFTP_ERR_LOCAL_WRITE_FAILED,
-			  "unable to write data to local file $local: $!");
-	return undef;
-    }
+    unless ($dont_save) {
+        unless (CORE::close $fh) {
+            $sftp->_set_error(SFTP_ERR_LOCAL_WRITE_FAILED,
+                              "unable to write data to local file $local: $!");
+            return undef;
+        }
 
-    # we can be running on taint mode, so some checks are
-    # performed to untaint data from the remote side.
+        # we can be running on taint mode, so some checks are
+        # performed to untaint data from the remote side.
 
-    if ($copy_time) {
-	if ($a->flags & SSH2_FILEXFER_ATTR_ACMODTIME) {
-	    $a->atime =~ /^(\d+)$/ or die "Bad atime from remote file $remote";
-	    my $atime = int $1;
-	    $a->mtime =~ /^(\d+)$/ or die "Bad mtime from remote file $remote";
-	    my $mtime = int $1;
+        if ($copy_time) {
+            if ($a->flags & SSH2_FILEXFER_ATTR_ACMODTIME) {
+                $a->atime =~ /^(\d+)$/ or die "Bad atime from remote file $remote";
+                my $atime = int $1;
+                $a->mtime =~ /^(\d+)$/ or die "Bad mtime from remote file $remote";
+                my $mtime = int $1;
 
-	    unless (utime $atime, $mtime, $local) {
-		$sftp->_set_error(SFTP_ERR_LOCAL_UTIME_FAILED,
-				  "Can't utime $local: $!");
-		return undef;
-	    }
-	}
+                unless (utime $atime, $mtime, $local) {
+                    $sftp->_set_error(SFTP_ERR_LOCAL_UTIME_FAILED,
+                                      "Can't utime $local: $!");
+                    return undef;
+                }
+            }
+        }
     }
 
     return !$sftp->{_error}
