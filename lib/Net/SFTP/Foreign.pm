@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '0.90_17';
+our $VERSION = '0.90_18';
 
 use strict;
 use warnings;
@@ -266,12 +266,21 @@ sub DESTROY {
     if (defined $pid) {
 	close $sftp->{ssh_out} if defined $sftp->{ssh_out};
 	close $sftp->{ssh_in} if (defined $sftp->{ssh_in} and !$windows);
-	if ($dirty_cleanup) {
-	    for my $sig (1, 1, 1, 9, 9) {
-		kill $sig, $pid;
+        if ($windows) {
+	    kill 1, $pid
+		and waitpid($pid, 0);
+        }
+        else {
+	    for my $sig (0, 1, 1, 9, 9) {
+                if ($sig) {
+                    kill $sig, $pid
+                }
+                else {
+                    next if $dirty_cleanup
+                }
 		eval {
 		    local $SIG{ALRM} = sub { die "timeout\n" };
-		    alarm 3;
+		    alarm 8;
 		    waitpid($pid, 0);
 		    alarm 0;
 		};
@@ -281,13 +290,6 @@ sub DESTROY {
 		}
 		last;
 	    }
-	}
-	elsif ($windows) {
-	    kill 1, $pid
-		and waitpid($pid, 0);
-	}
-	else {
-	    waitpid($pid, 0);
 	}
     }
 }
@@ -3088,7 +3090,10 @@ the slave ssh process does not terminate it and a work around has to
 be applied. If you find that your scripts hung when the sftp object
 gets out of scope, try setting C<$Net::SFTP::Foreign::dirty_cleanup>
 to a true value and also send me a report including the value of
-C<$^O> on your machine.
+C<$^O> on your machine and the OpenSSH version.
+
+From version 0.90_18 upwards, a dirty cleanup is performed anyway when
+the ssh process does not terminate by itself in 8 seconds or less.
 
 This version does not work on Windows (patches very welcome)!
 
