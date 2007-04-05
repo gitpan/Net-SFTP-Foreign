@@ -104,7 +104,9 @@ BEGIN {
 		      SFTP_ERR_LOCAL_BAD_PATH => 40,
 		      SFTP_ERR_LOCAL_BAD_OBJECT => 41,
 		      SFTP_ERR_REMOTE_ALREADY_EXISTS => 42,
-                      SFTP_ERR_BAD_SSH_BINARY => 43);
+                      SFTP_ERR_BAD_SSH_BINARY => 43,
+                      SFTP_ERR_ABORTED => 44
+                    );
 
     for my $key (keys %constants) {
 	no strict 'refs';

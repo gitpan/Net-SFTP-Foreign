@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '0.90_18';
+our $VERSION = '0.90_19';
 
 use strict;
 use warnings;
@@ -1113,6 +1113,11 @@ sub _gen_save_status_method {
 
 ## High-level client -> server methods.
 
+sub abort {
+    my $sftp = shift;
+    $sftp->_set_error(SFTP_ERR_ABORTED, ($@ ? $_[0] : "Aborted"));
+}
+
 # returns true on success, undef on failure
 sub get {
     @_ >= 3 or croak 'Usage: $sftp->get($remote, $local, %opts)';
@@ -1270,6 +1275,8 @@ sub get {
 	if (defined $cb) {
 	    $size = $loff if $loff > $size;
 	    $cb->($sftp, $data, $roff, $size);
+
+            last if $sftp->error;
 	}
 
         unless ($dont_save) {
@@ -1329,7 +1336,7 @@ sub get_content {
 
 sub put {
     @_ >= 3 or croak 'Usage: $sftp->put($local, $remote, %opts)';
-    
+
     my ($sftp, $local, $remote, %opts) = @_;
 
     $sftp->_set_error;
@@ -1420,13 +1427,16 @@ sub put {
 		if (defined $cb) {
 		    $lsize = $nextoff if $nextoff > $lsize;
 		    $cb->($sftp, $data, $readoff, $lsize);
+
+                    last OK if $sftp->error;
+
 		    $len = length $data;
 		    $nextoff = $readoff + $len;
 		}
 
 		if ($len) {
 		    my $id = $sftp->_queue_new_msg(SSH2_FXP_WRITE, str => $rfid,
-						  int64 => $readoff, str => $data);
+                                                   int64 => $readoff, str => $data);
 		
 		    push @msgid, $id;
 		    push @readoff, $readoff;
@@ -2451,6 +2461,17 @@ progress meters, etc.:
 
 =back
 
+The C<abort> method can be called from inside the callback to abort
+the transfer:
+
+    sub callback {
+        my($sftp, $data, $offset, $size) = @_;
+        if (want_to_abort_transfer()) {
+            $sftp->abort("You wanted to abort the transfer");
+        }
+    }
+
+
 =item $sftp-E<gt>get_content($remote)
 
 Returns the content of the remote file.
@@ -2504,7 +2525,20 @@ the total size of the file in bytes.
 This mechanism can be used to provide status messages, download
 progress meters, etc.
 
+The C<abort> method can be called from inside the callback to abort
+the transfer.
+
 =back
+
+=item $sftp-E<gt>abort()
+
+=item $sftp-E<gt>abort($msg)
+
+This method, when called from inside a callback sub, causes the
+current transfer to be aborted
+
+The error state is set to SFTP_ERR_ABORTED and the optional $msg
+argument is used as its textual value.
 
 =item $sftp-E<gt>ls($remote, %opts)
 
