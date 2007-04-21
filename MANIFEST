@@ -1,5 +1,6 @@
 Changes
 samples/psftp
+samples/passwd_conn.pl
 lib/Net/SFTP/Foreign.pm
 lib/Net/SFTP/Foreign/Attributes.pm
 lib/Net/SFTP/Foreign/Attributes/Compat.pm

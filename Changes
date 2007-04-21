@@ -1,5 +1,14 @@
 Revision history for Net::SFTP::Foreign
 
+0.90_20 Apr 20, 2007
+        - add support for "transport" options on the constructor that
+          allows to use password authentication and keys protected by
+          a passphrase
+        - add password authentication sample
+
+0.90_19 Apr 5, 2007
+        - add abort method (feature requested by Jamie Lahowetz)
+
 0.90_18 Mar 23, 2007
         - fallback to dirty cleanup if ssh process doesn't exit cleanly in
           8 seconds (bug reported by Brandon Schendel).

@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '0.90_19';
+our $VERSION = '0.90_20';
 
 use strict;
 use warnings;
@@ -198,37 +198,46 @@ sub new {
     $sftp->_set_status;
     $sftp->_set_error;
 
-    my @open2_cmd;
-
-    my $open2_cmd = delete $opts{open2_cmd};
-    if (defined $open2_cmd) {
-	@open2_cmd = _ensure_list($open2_cmd);
-    }
-    else {
-	my $host = delete $opts{host};
-	defined $host or croak "sftp target host not defined";
-
-	my $ssh_cmd = delete $opts{ssh_cmd};
-	@open2_cmd = defined $ssh_cmd ? $ssh_cmd : 'ssh';
-
-	my $port = delete $opts{port};
-	push @open2_cmd, -p => $port if defined $port;
-
-	my $user = delete $opts{user};
-	push @open2_cmd, -l => $user if defined $user;
-
-	push @open2_cmd, _ensure_list(delete $opts{more});
-
-	push @open2_cmd, $host, -s => 'sftp';
-    }
-
+    my $transport = delete $opts{transport};
     $sftp->{_timeout} = delete $opts{timeout};
     $sftp->{_autoflush} = delete $opts{autoflush};
+
+    my @open2_cmd;
+    unless (defined $transport) {
+
+        my $open2_cmd = delete $opts{open2_cmd};
+        if (defined $open2_cmd) {
+            @open2_cmd = _ensure_list($open2_cmd);
+        }
+        else {
+            my $host = delete $opts{host};
+            defined $host or croak "sftp target host not defined";
+
+            my $ssh_cmd = delete $opts{ssh_cmd};
+            @open2_cmd = defined $ssh_cmd ? $ssh_cmd : 'ssh';
+
+            my $port = delete $opts{port};
+            push @open2_cmd, -p => $port if defined $port;
+
+            my $user = delete $opts{user};
+            push @open2_cmd, -l => $user if defined $user;
+
+            push @open2_cmd, _ensure_list(delete $opts{more});
+
+            push @open2_cmd, $host, -s => 'sftp';
+        }
+    }
 
     croak "invalid option(s) '".CORE::join("', '", keys %opts)."' or bad combination"
 	if %opts;
 
-    if ($windows) {
+    if (defined $transport) {
+        @{$sftp}{qw(ssh_in ssh_out pid)} = ( ref $transport eq 'ARRAY'
+                                             ? @$transport
+                                             : ($transport, $transport));
+    }
+
+    elsif ($windows) {
 	my ($pid, $socket) = winopen2(@open2_cmd)
 	    or croak "running '@_' failed ($!)";
 
@@ -2301,7 +2310,8 @@ provided by Net::SSH::Perl.
 Net::SFTP::Foreign supports version 2 of the SSH protocol only.
 
 Finally B<Net::SFTP::Foreign does not (and will never) allow to use
-passwords for authentication>. Net::SFTP does.
+passwords for authentication> (though, see the FAQ below). Net::SFTP
+does.
 
 
 =head2 USAGE
@@ -2319,6 +2329,8 @@ setting C<$sftp-E<gt>error>.
 =over 4
 
 =item Net::SFTP::Foreign->new($host, %args)
+
+=item Net::SFTP::Foreign->new(%args)
 
 Opens a new SFTP connection with a remote host C<$host>, and returns a
 Net::SFTP::Foreign object representing that open connection.
@@ -2370,6 +2382,23 @@ arrives on the ssh socket for the given time while waiting for some
 command to complete.
 
 After a timeout, the ssh connection becomes invalid.
+
+=item transport =E<gt> $fh
+
+=item transport =E<gt> [$in_fh, $out_fh]
+
+=item transport =E<gt> [$in_fh, $out_fh, $pid]
+
+This option allows to use an already open pipe or socket as the
+transport for the SFTP protocol.
+
+It can be (ab)used to make this module work with password
+authentication or with keys requiring a passphrase.
+
+On some systems, when using a pipe as the transport, closing it, does
+not cause the process at the other side to exit. The additional
+C<$pid> argument can be used to instruct this module to kill that
+process if it doesn't exit by itself.
 
 =back
 
@@ -3111,7 +3140,40 @@ B<Q>: I noticed that the examples/synopsis that is provided has no
 mention of using a password to login. How is one, able to login to a
 SFTP server that requires uid/pwd for login?
 
-B<A>: You can't!
+B<A>: You can't! ...
+
+Well, actually you can, using the C<transport> option on the
+constructor and L<Expect> to handle the password authentication part
+on your script:
+
+  use Expect;
+
+  my $conn = Expect->new;
+  $conn->raw_pty(1);
+
+  $conn->spawn('/usr/bin/ssh', -l => $user, $host, -s => 'sftp')
+      or die $errstr;
+
+  $conn->expect($timeout, "Password:")
+      or die "Password not requested as expected";
+  $conn->send("$passwd\n");
+  $conn->expect($timeout, "\n");
+
+  my $sftp = Net::SFTP::Foreign->new(transport => $conn);
+  die "unable to stablish SSH connection: ". $sftp->error
+      if $sftp->error;
+
+(full example is available from the C<samples> directory in this
+package).
+
+Anyway, I highly discourage this practice. You better use public-key
+authentication instead.
+
+=item Using passphrase protected keys:
+
+B<Q>: How can I use keys protected by a passphrase?
+
+B<A>: You can't ... well, ok, see answer to previous question.
 
 =back
 
