@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '0.90_20';
+our $VERSION = '0.90_21';
 
 use strict;
 use warnings;
@@ -222,7 +222,13 @@ sub new {
             my $user = delete $opts{user};
             push @open2_cmd, -l => $user if defined $user;
 
-            push @open2_cmd, _ensure_list(delete $opts{more});
+            my $more = delete $opts{more};
+            if (defined $more) {
+                if (!ref($more) and $more =~ /^-\w\s+\S/) {
+                    carp "'more' argument looks like it needs to be splited first"
+                }
+                push @open2_cmd, _ensure_list($more)
+            }
 
             push @open2_cmd, $host, -s => 'sftp';
         }
@@ -2250,10 +2256,6 @@ Net::SFTP::Foreign - Secure File Transfer Protocol client
 
 =head1 DESCRIPTION
 
-  WARNING: This is a development version, expect bugs on it!!!
-
-  WARNING: This package is not compatible with Net::SFTP anymore!!!
-
 SFTP stands for Secure File Transfer Protocol and is a method of
 transferring files between machines over a secure, encrypted
 connection (as opposed to regular FTP, which functions over an
@@ -2271,10 +2273,10 @@ Net::SFTP::Foreign uses any compatible C<ssh> command installed on
 your system (for instance, OpenSSH C<ssh>) to establish the secure
 connection to the remote server.
 
-Formelly Net::SFTP::Foreign was a hacked version of Net::SFTP, but
+Formerly, Net::SFTP::Foreign was a hacked version of Net::SFTP, but
 from version 0.90 it has been rewritten almost completely from scratch
-and a new much improved and incompatible API introduced (an adaptor
-module, L<Net::SFTP::Foreign::Compat>, is also provided for backward
+and a new much improved API introduced (an adaptor module,
+L<Net::SFTP::Foreign::Compat>, is also provided for backward
 compatibility).
 
 
@@ -2310,8 +2312,8 @@ provided by Net::SSH::Perl.
 Net::SFTP::Foreign supports version 2 of the SSH protocol only.
 
 Finally B<Net::SFTP::Foreign does not (and will never) allow to use
-passwords for authentication> (though, see the FAQ below). Net::SFTP
-does.
+passwords for authentication> while Net::SFTP does... though, see the
+FAQ below.
 
 
 =head2 USAGE
@@ -2320,11 +2322,6 @@ Most of the methods available from this package return undef on
 failure and a true value or the requested data on
 success. C<$sftp-E<gt>error> can be used to check explicitly for an
 error after every method call.
-
-Incompatible change from earlier versions: low-level network errors (as
-for instance, broken SSH connections) do *not* cause methods to die
-anymore. Now they are handled as other errors, returning undef and
-setting C<$sftp-E<gt>error>.
 
 =over 4
 
@@ -2357,6 +2354,12 @@ port number where the remote SSH server is listening
 
 additional args passed to C<ssh> command.
 
+For debugging purposes you can run C<ssh> in verbose mode passing it
+the C<-v> option:
+
+  my $sftp = Net::SFTP::Foreign->new($host, more => '-v');
+
+
 =item ssh_cmd =E<gt> $sshcmd
 
 name of the external SSH client. By default C<ssh> is used.
@@ -2381,7 +2384,8 @@ when this parameter is set, the connection is dropped if no data
 arrives on the ssh socket for the given time while waiting for some
 command to complete.
 
-After a timeout, the ssh connection becomes invalid.
+When the timeout expires, the current method is aborted and
+the SFTP connection becomes invalid.
 
 =item transport =E<gt> $fh
 
@@ -2402,20 +2406,11 @@ process if it doesn't exit by itself.
 
 =back
 
-If stablishing the connection fails, an exception is raised, you can
-use C<eval> to catch it:
+An explicit check for errors should be included always after the
+constructor call:
 
-  my $sftp = eval { Net::SFTP::Foreign->new(foo) };
-  if ($@) {
-      print STDERR "something went wrong ($@)"
-  }
-
-The exit code for the C<ssh> command is available in C<$?>, though
-OpenSSH C<ssh> does not return meaningful codes. For debugging
-purposes you can run C<ssh> in verbose mode passing it the C<-v>
-option via the C<more> option.
-
-  my $sftp = Net::SFTP::Foreign->new($host, more => '-v');
+  my $sftp = Net::SFTP::Foreign->new(...);
+  $sftp->error and die "SSH connection failed: " . $sftp->error;
 
 =item $sftp-E<gt>error
 
@@ -3150,6 +3145,7 @@ on your script:
 
   my $conn = Expect->new;
   $conn->raw_pty(1);
+  $conn->log_user(0);
 
   $conn->spawn('/usr/bin/ssh', -l => $user, $host, -s => 'sftp')
       or die $errstr;
@@ -3163,17 +3159,32 @@ on your script:
   die "unable to stablish SSH connection: ". $sftp->error
       if $sftp->error;
 
-(full example is available from the C<samples> directory in this
-package).
+The full example is available from the C<samples> directory in this
+package.
 
 Anyway, I highly discourage this practice. You better use public-key
-authentication instead.
+authentication instead!
 
 =item Using passphrase protected keys:
 
 B<Q>: How can I use keys protected by a passphrase?
 
 B<A>: You can't ... well, ok, see answer to previous question.
+
+=item Constructor C<more> argument expects an array reference:
+
+B<Q>: I'm trying to pass in the private key file using the -i option,
+but it keep saying it couldn't find the key. What I'm doing wrong?
+
+B<A>: The C<more> argument on the constructor expects a single option
+or a reference to an array of options. It will not split an string
+containing several options.
+
+Arguments to SSH options have to be also passed as different entries
+on the array:
+
+  my $sftp = Net::SFTP::Foreign->new($host,
+                                      more => [qw(-i /home/foo/.ssh/id_dsa)]);
 
 =back
 

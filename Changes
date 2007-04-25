@@ -1,5 +1,11 @@
 Revision history for Net::SFTP::Foreign
 
+0.90_21 Apr 25, 2007
+        - some documentation improvements
+        - check that ctor 'more' arguments are not joined
+        - eliminate "Password" prompt on passwd_auth sample (solution
+          suggested by Fletch on PerlMonks)
+
 0.90_20 Apr 20, 2007
         - add support for "transport" options on the constructor that
           allows to use password authentication and keys protected by

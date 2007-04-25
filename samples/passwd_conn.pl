@@ -26,6 +26,7 @@ my @dir = @ARGV ? @ARGV : ('/');
 # initialize an Expect object:
 my $conn = Expect->new;
 $conn->raw_pty(1);
+$conn->log_user(0);
 
 # spawn a new SSH process:
 $conn->spawn('/usr/bin/ssh', -l => $user, $host, -s => 'sftp')
