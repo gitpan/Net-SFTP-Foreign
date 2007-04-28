@@ -1,5 +1,8 @@
 Revision history for Net::SFTP::Foreign
 
+0.90_22 Apr 29, 2007
+        - experimental Windows support added
+
 0.90_21 Apr 25, 2007
         - some documentation improvements
         - check that ctor 'more' arguments are not joined

@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '0.90_21';
+our $VERSION = '0.90_22';
 
 use strict;
 use warnings;
@@ -87,7 +87,7 @@ sub _sysreadn {
     return $n;
 }
 
-sub _do_io {
+sub _do_io_unix {
     my ($sftp, $timeout) = @_;
 
     return undef unless $sftp->{_connected};
@@ -100,48 +100,78 @@ sub _do_io {
 
     my $bin = \$sftp->{_bin};
     my $bout = \$sftp->{_bout};
-    my $offout = 0;
 
     while (1) {
-      my $lbin = length $$bin;
-      if ($lbin >= 4) {
-	my $len = 4 + unpack N => $$bin;
-	return 1 if $lbin >= $len;
-	if ($len > 256 * 1024) {
-	  $sftp->_set_status(SSH2_FX_BAD_MESSAGE);
-	  $sftp->_set_error(SFTP_ERR_REMOTE_BAD_MESSAGE,
-			    "bad remote message received");
-	  return undef;
-	}
-      }
+        my $lbin = length $$bin;
+        if ($lbin >= 4) {
+            my $len = 4 + unpack N => $$bin;
+            return 1 if $lbin >= $len;
+            if ($len > 256 * 1024) {
+                $sftp->_set_status(SSH2_FX_BAD_MESSAGE);
+                $sftp->_set_error(SFTP_ERR_REMOTE_BAD_MESSAGE,
+                                  "bad remote message received");
+                return undef;
+            }
+        }
 
-      my $rv1 = $rv;
-      my $wv1 = length($$bout) ? $wv : '';
+        my $rv1 = $rv;
+        my $wv1 = length($$bout) ? $wv : '';
 
-      my $n = select($rv1, $wv1, undef, $timeout);
-      if ($n > 0) {
-	if (vec($wv1, $fnoout, 1)) {
-	  my $written = syswrite($sftp->{ssh_out}, $$bout, 16384, $offout);
-	  unless ($written) {
-	    $sftp->_conn_lost;
-	    return undef;
-	  }
-	  substr($$bout, 0, $written, '');
-	}
-	if (vec($rv1, $fnoin, 1)) {
-	  my $read = sysread($sftp->{ssh_in}, $sftp->{_bin}, 16384, length($$bin));
-	  unless ($read) {
-	    $sftp->_conn_lost;
-	    return undef;
-	  }
-	}
-      }
-      else {
-	next if ($n < 0 and $! == Errno::EINTR());
-	return undef;
-      }
+        my $n = select($rv1, $wv1, undef, $timeout);
+        if ($n > 0) {
+            if (vec($wv1, $fnoout, 1)) {
+                my $written = syswrite($sftp->{ssh_out}, $$bout, 16384);
+                unless ($written) {
+                    $sftp->_conn_lost;
+                    return undef;
+                }
+                substr($$bout, 0, $written, '');
+            }
+            if (vec($rv1, $fnoin, 1)) {
+                my $read = sysread($sftp->{ssh_in}, $sftp->{_bin}, 16384, length($$bin));
+                unless ($read) {
+                    $sftp->_conn_lost;
+                    return undef;
+                }
+            }
+        }
+        else {
+            next if ($n < 0 and $! == Errno::EINTR());
+            return undef;
+        }
     }
 }
+
+sub _do_io_win {
+    my ($sftp, $timeout) = @_;
+
+    return undef unless $sftp->{_connected};
+
+    my $bin = \$sftp->{_bin};
+    my $bout = \$sftp->{_bout};
+
+    while (length $$bout) {
+	my $written = syswrite($sftp->{ssh_out}, $$bout, 16384);
+	unless ($written) {
+	    $sftp->_conn_lost;
+	    return undef;
+	}
+	substr($$bout, 0, $written, "");
+    }
+
+    $sftp->_sysreadn(4) or return undef;
+
+    my $len = 4 + unpack N => $$bin;
+    if ($len > 256 * 1024) {
+	$sftp->_set_status(SSH2_FX_BAD_MESSAGE);
+	$sftp->_set_error(SFTP_ERR_REMOTE_BAD_MESSAGE,
+			  "bad remote message received");
+	return undef;
+    }
+    $sftp->_sysreadn($len);
+}
+
+*_do_io = $windows ? \&_do_io_win : \&_do_io_unix;
 
 sub _conn_lost {
     my ($sftp, $status, $err, $str) = @_;
@@ -185,7 +215,7 @@ sub new {
     my %opts = @_;
 
     my $sftp = { _msg_id => 0,
-		 _queue_size => 10,
+		 _queue_size => ($windows ? 4 : 10),
 		 _block_size => 16384,
 		 _read_ahead => 16384 * 4,
 		 _bout => '',
@@ -243,28 +273,18 @@ sub new {
                                              : ($transport, $transport));
     }
 
-    elsif ($windows) {
-	my ($pid, $socket) = winopen2(@open2_cmd)
-	    or croak "running '@_' failed ($!)";
-
-	binmode $socket;
-	$sftp->{pid} = $pid;
-	$sftp->{ssh_in} = $socket;
-	$sftp->{ssh_out} = $socket;
+    my $pid = $$;
+    $sftp->{pid} = eval { open2($sftp->{ssh_in}, $sftp->{ssh_out}, @open2_cmd) };
+    if ($pid != $$) { # that's to workaround a bug in IPC::Open3:
+        require POSIX;
+        POSIX::_exit(-1);
     }
-    else {
-        my $pid = $$;
-	$sftp->{pid} = eval { open2($sftp->{ssh_in}, $sftp->{ssh_out}, @open2_cmd) };
-        if ($pid != $$) { # that's to workaround a bug in IPC::Open3:
-            require POSIX;
-            POSIX::_exit(-1);
-        }
-        unless (defined $sftp->{pid}) {
-            $sftp->_set_status(SSH2_FX_NO_CONNECTION);
-            $sftp->_set_error(SFTP_ERR_BAD_SSH_BINARY, "Bad ssh command: $!");
-            return $sftp;
-        }
-
+    unless (defined $sftp->{pid}) {
+        $sftp->_set_status(SSH2_FX_NO_CONNECTION);
+        $sftp->_set_error(SFTP_ERR_BAD_SSH_BINARY, "Bad ssh command: $!");
+        return $sftp;
+    }
+    unless ($windows) {
 	for my $dir (qw(ssh_in ssh_out)) {
 	    my $flags = fcntl($sftp->{$dir}, F_GETFL, 0);
 	    fcntl($sftp->{$dir}, F_SETFL, $flags | O_NONBLOCK);
@@ -3202,7 +3222,7 @@ C<$^O> on your machine and the OpenSSH version.
 From version 0.90_18 upwards, a dirty cleanup is performed anyway when
 the ssh process does not terminate by itself in 8 seconds or less.
 
-This version does not work on Windows (patches very welcome)!
+Support for Windows OSs is still experimental!
 
 To report bugs, please, send me and email or use
 L<http://rt.cpan.org>.
