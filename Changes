@@ -1,5 +1,8 @@
 Revision history for Net::SFTP::Foreign
 
+1.23  23 May 2007
+        - release as stable!
+
 0.90_22 Apr 29, 2007
         - experimental Windows support added
 

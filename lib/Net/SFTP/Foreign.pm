@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '0.90_22';
+our $VERSION = '1.23';
 
 use strict;
 use warnings;
@@ -2340,8 +2340,8 @@ FAQ below.
 
 Most of the methods available from this package return undef on
 failure and a true value or the requested data on
-success. C<$sftp-E<gt>error> can be used to check explicitly for an
-error after every method call.
+success. C<$sftp-E<gt>error> can be used to explicitly check for
+errors after every method call.
 
 =over 4
 
@@ -3209,8 +3209,6 @@ on the array:
 =back
 
 =head1 BUGS
-
-This is a development version!
 
 On some operative systems, closing the pipes used to comunicate with
 the slave ssh process does not terminate it and a work around has to
