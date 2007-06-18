@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:                Net-SFTP-Foreign
-version:             1.23
+version:             1.24
 abstract:            Secure File Transfer Protocol client
 license:             ~
 generated_by:        ExtUtils::MakeMaker version 6.32

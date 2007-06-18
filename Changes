@@ -1,7 +1,14 @@
 Revision history for Net::SFTP::Foreign
 
+1.24  18 Jun 2007
+        - DESTROY was messing up $@ (bug reported by Kai Grossjohann)
+        - set $SIG{PIPE} handler inside _do_io to catch IO errors
+        - don't execute external command when transport option is used
+          on constructor
+
 1.23  23 May 2007
         - release as stable!
+        - some doc improvements
 
 0.90_22 Apr 29, 2007
         - experimental Windows support added

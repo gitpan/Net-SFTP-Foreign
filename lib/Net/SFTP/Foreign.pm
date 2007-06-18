@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.23';
+our $VERSION = '1.24';
 
 use strict;
 use warnings;
@@ -100,6 +100,8 @@ sub _do_io_unix {
 
     my $bin = \$sftp->{_bin};
     my $bout = \$sftp->{_bout};
+
+    local $SIG{PIPE} = 'IGNORE';
 
     while (1) {
         my $lbin = length $$bin;
@@ -272,23 +274,24 @@ sub new {
                                              ? @$transport
                                              : ($transport, $transport));
     }
-
-    my $pid = $$;
-    $sftp->{pid} = eval { open2($sftp->{ssh_in}, $sftp->{ssh_out}, @open2_cmd) };
-    if ($pid != $$) { # that's to workaround a bug in IPC::Open3:
-        require POSIX;
-        POSIX::_exit(-1);
-    }
-    unless (defined $sftp->{pid}) {
-        $sftp->_set_status(SSH2_FX_NO_CONNECTION);
-        $sftp->_set_error(SFTP_ERR_BAD_SSH_BINARY, "Bad ssh command: $!");
-        return $sftp;
-    }
-    unless ($windows) {
-	for my $dir (qw(ssh_in ssh_out)) {
-	    my $flags = fcntl($sftp->{$dir}, F_GETFL, 0);
-	    fcntl($sftp->{$dir}, F_SETFL, $flags | O_NONBLOCK);
-	}
+    else {
+        my $pid = $$;
+        $sftp->{pid} = eval { open2($sftp->{ssh_in}, $sftp->{ssh_out}, @open2_cmd) };
+        if ($pid != $$) { # that's to workaround a bug in IPC::Open3:
+            require POSIX;
+            POSIX::_exit(-1);
+        }
+        unless (defined $sftp->{pid}) {
+            $sftp->_set_status(SSH2_FX_NO_CONNECTION);
+            $sftp->_set_error(SFTP_ERR_BAD_SSH_BINARY, "Bad ssh command: $!");
+            return $sftp;
+        }
+        unless ($windows) {
+            for my $dir (qw(ssh_in ssh_out)) {
+                my $flags = fcntl($sftp->{$dir}, F_GETFL, 0);
+                fcntl($sftp->{$dir}, F_SETFL, $flags | O_NONBLOCK);
+            }
+        }
     }
 
     $sftp->_init;
@@ -306,6 +309,7 @@ sub DESTROY {
 		and waitpid($pid, 0);
         }
         else {
+            local $@;
 	    for my $sig (0, 1, 1, 9, 9) {
                 if ($sig) {
                     kill $sig, $pid
