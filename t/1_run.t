@@ -106,7 +106,7 @@ plan skip_all => "tests not supported on inferior OS"
 plan skip_all => "sftp-server not found"
     unless defined $sscmd;
 
-plan tests => 267;
+plan tests => 264;
 
 use_ok('Net::SFTP::Foreign');
 use Net::SFTP::Foreign::Constants qw(:flags);
@@ -307,19 +307,19 @@ opendir DIR, $lcwd;
 my @ld = sort grep !/^\./, readdir DIR;
 closedir DIR;
 
-SKIP: {
-    skip "tied directory handles not available on this perl", 3
-	unless eval "use 5.9.4; 1";
-
-    my $rd = $sftp->opendir($rcwd);
-    ok($rd, "open remote dir");
-
-    my @rd = sort grep !/^\./, readdir $rd;
-    is("@rd", "@ld", "readdir array");
-
-    ok (closedir($rd), "close dir");
-
-};
+# SKIP: {
+#    skip "tied directory handles not available on this perl", 3
+#	unless eval "use 5.9.4; 1";
+#
+#    my $rd = $sftp->opendir($rcwd);
+#    ok($rd, "open remote dir");
+#
+#    my @rd = sort grep !/^\./, readdir $rd;
+#    is("@rd", "@ld", "readdir array");
+#
+#    ok (closedir($rd), "close dir");
+#
+#};
 
 my $rd = $sftp->opendir($rcwd);
 ok($rd, "open remote dir 2");
