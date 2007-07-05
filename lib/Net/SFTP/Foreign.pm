@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.25';
+our $VERSION = '1.26';
 
 use strict;
 use warnings;
@@ -212,6 +212,8 @@ sub _get_msg {
 }
 
 sub new {
+    ${^TAINT} and &_catch_tainted_args;
+
     my $class = shift;
     unshift @_, 'host' if @_ & 1;
     my %opts = @_;
@@ -463,9 +465,9 @@ sub _check_status_ok {
 ## SSH2_FXP_OPEN (3)
 # returns handle on success, undef on failure
 sub open {
-
     (@_ >= 2 and @_ <= 4)
 	or croak 'Usage: $sftp->open($path [, $flags [, $attrs]])';
+    ${^TAINT} and &_catch_tainted_args;
 
     my $sftp = shift;
     my($path, $flags, $a) = @_;
@@ -489,9 +491,9 @@ sub open {
 
 ## SSH2_FXP_OPENDIR (11)
 sub opendir {
-
     (@_ >= 2 and @_ <= 3)
 	or croak 'Usage: $sftp->opendir($path [, $attrs])';
+    ${^TAINT} and &_catch_tainted_args;
 
     my $sftp = shift;
     my $id = $sftp->_queue_str_request(SSH2_FXP_OPENDIR, @_);
@@ -507,7 +509,6 @@ sub opendir {
 ## SSH2_FXP_READ (4)
 # returns data on success undef on failure
 sub sftpread {
-
     (@_ >= 3 and @_ <= 4)
 	or croak 'Usage: $sftp->sftpread($fh, $offset [, $size])';
 
@@ -535,7 +536,6 @@ sub sftpread {
 ## SSH2_FXP_WRITE (6)
 # returns true on success, undef on failure
 sub sftpwrite {
-
     @_ == 4 or croak 'Usage: $sftp->sftpwrite($fh, $offset, $data)';
 
     my ($sftp, $rfh, $offset, $data) = @_;
@@ -554,7 +554,6 @@ sub sftpwrite {
 }
 
 sub seek {
-
     (@_ >= 3 and @_ <= 4)
 	or croak 'Usage: $sftp->seek($fh, $pos [, $whence])';
 
@@ -583,7 +582,6 @@ sub seek {
 }
 
 sub tell {
-
     @_ == 2 or croak 'Usage: $sftp->tell($fh)';
 
     my ($sftp, $rfh) = @_;
@@ -591,7 +589,6 @@ sub tell {
 }
 
 sub eof {
-
     @_ == 2 or croak 'Usage: $sftp->eof($fh)';
 
     my ($sftp, $rfh) = @_;
@@ -649,7 +646,6 @@ sub _write {
 }
 
 sub write {
-
     @_ == 3 or croak 'Usage: $sftp->write($fh, $data)';
 
     my ($sftp, $rfh) = @_;
@@ -668,7 +664,6 @@ sub write {
 }
 
 sub flush {
-
     (@_ >= 2 and @_ <= 3)
 	or croak 'Usage: $sftp->flush($fh [, $direction])';
 
@@ -784,7 +779,6 @@ sub _fill_read_cache {
 }
 
 sub read {
-
     @_ == 3 or croak 'Usage: $sftp->read($fh, $len)';
 
     my ($sftp, $rfh, $len) = @_;
@@ -831,7 +825,6 @@ sub _readline {
 }
 
 sub readline {
-
     (@_ >= 2 and @_ <= 3)
 	or croak 'Usage: $sftp->readline($fh [, $sep])';
 
@@ -857,7 +850,6 @@ sub readline {
 }
 
 sub getc {
-
     @_ == 2 or croak 'Usage: $sftp->getc($fh)';
 
     my ($sftp, $rfh) = @_;
@@ -874,9 +866,9 @@ sub getc {
 sub _gen_stat_method {
     my ($code, $error, $errstr) = @_;
     return sub {
-
 	(@_ >= 2 and @_ <= 3)
 	    or croak 'Usage: $sftp->stat($path)';
+        ${^TAINT} and &_catch_tainted_args;
 
 	my $sftp = shift;
 	my $id = $sftp->_queue_str_request($code, @_);
@@ -900,9 +892,9 @@ sub _gen_stat_method {
 			 "Couldn't stat remote file (stat)");
 
 sub fstat {
-
     (@_ >= 2 and @_ <= 3)
 	or croak 'Usage: $sftp->fstat($path)';
+    ${^TAINT} and &_catch_tainted_args;
 
     my $sftp = shift;
     my $id = $sftp->_queue_rfid_request(SSH2_FXP_FSTAT, @_);
@@ -922,6 +914,7 @@ sub _gen_remove_method {
     my($code, $error, $errstr) = @_;
     return sub {
 	@_ == 2 or croak 'Usage: $sftp->some_method($str)';
+        ${^TAINT} and &_catch_tainted_args;
 
         my $sftp = shift;
         my $id = $sftp->_queue_str_request($code, @_);
@@ -944,6 +937,7 @@ sub _gen_remove_method {
 sub mkdir {
     (@_ >= 2 and @_ <= 3)
         or croak 'Usage: $sftp->mkdir($str [, $attrs])';
+    ${^TAINT} and &_catch_tainted_args;
 
     my ($sftp, $name, $attrs) = @_;
     $attrs = _empty_attributes unless defined $attrs;
@@ -955,6 +949,7 @@ sub mkdir {
 
 sub setstat {
     @_ == 3 or croak 'Usage: $sftp->setstat($str, $attrs)';
+    ${^TAINT} and &_catch_tainted_args;
 
     my ($sftp, $name, $attrs) = @_;
     my $id = $sftp->_queue_str_request(SSH2_FXP_SETSTAT, $name, $attrs);
@@ -968,6 +963,7 @@ sub setstat {
 
 sub fsetstat {
     @_ == 3 or croak 'Usage: $sftp->fsetstat($fh, $attrs)';
+    ${^TAINT} and &_catch_tainted_args;
 
     my $sftp = shift;
     my $id = $sftp->_queue_rid_request(SSH2_FXP_FSETSTAT, @_);
@@ -991,7 +987,6 @@ sub _close {
 }
 
 sub close {
-
     @_ == 2 or croak 'Usage: $sftp->close($fh)';
 
     my ($sftp, $rfh) = @_;
@@ -1007,8 +1002,8 @@ sub close {
 }
 
 sub closedir {
-
     @_ == 2 or croak 'Usage: $sftp->closedir($dh)';
+    ${^TAINT} and &_catch_tainted_args;
 
     my ($sftp, $rdh) = @_;
     $rdh->_check_is_dir;
@@ -1021,8 +1016,8 @@ sub closedir {
 }
 
 sub readdir {
-
     @_ == 2 or croak 'Usage: $sftp->readdir($dh)';
+    ${^TAINT} and &_catch_tainted_args;
 
     my ($sftp, $rdh) = @_;
 
@@ -1074,8 +1069,8 @@ sub _readdir {
 sub _gen_getpath_method {
     my ($code, $error, $name) = @_;
     return sub {
-
 	@_ == 2 or croak 'Usage: $sftp->some_method($path)';
+        ${^TAINT} and &_catch_tainted_args;
 
 	my ($sftp, $path) = @_;
 	
@@ -1107,6 +1102,9 @@ sub _gen_getpath_method {
 ## SSH2_FXP_RENAME (18)
 # true on success, undef on failure
 sub rename {
+    @_ == 2 or croak 'Usage: $sftp->rename($old, $new)';
+    ${^TAINT} and &_catch_tainted_args;
+
     my ($sftp, $old, $new) = @_;
     my $id = $sftp->_queue_new_msg(SSH2_FXP_RENAME,
 				  str => $old,
@@ -1119,8 +1117,8 @@ sub rename {
 ## SSH2_FXP_SYMLINK (20)
 # true on success, undef on failure
 sub symlink {
-
     @_ == 3 or croak 'Usage: $sftp->symlink($target, $new)';
+    ${^TAINT} and &_catch_tainted_args;
 
     my ($sftp, $target, $new) = @_;
     my $id = $sftp->_queue_new_msg(SSH2_FXP_SYMLINK,
@@ -1160,6 +1158,7 @@ sub abort {
 # returns true on success, undef on failure
 sub get {
     @_ >= 3 or croak 'Usage: $sftp->get($remote, $local, %opts)';
+    ${^TAINT} and &_catch_tainted_args;
 
     my ($sftp, $remote, $local, %opts) = @_;
 
@@ -1363,6 +1362,7 @@ sub get {
 # return file contents on success, undef on failure
 sub get_content {
     @_ == 2 or croak 'Usage: $sftp->get_content($remote)';
+    ${^TAINT} and &_catch_tainted_args;
 
     my ($sftp, $name) = @_;
     my @data;
@@ -1375,6 +1375,7 @@ sub get_content {
 
 sub put {
     @_ >= 3 or croak 'Usage: $sftp->put($local, $remote, %opts)';
+    ${^TAINT} and &_catch_tainted_args;
 
     my ($sftp, $local, $remote, %opts) = @_;
 
@@ -1520,8 +1521,8 @@ sub put {
 }
 
 sub ls {
-
     @_ >= 2 or croak 'Usage: $sftp->ls($remote, %opts)';
+    ${^TAINT} and &_catch_tainted_args;
 
     my ($sftp, $remote, %opts) = @_;
 
@@ -1615,6 +1616,7 @@ sub join {
 
 sub glob {
     @_ >= 2 or croak 'Usage: $sftp->glob($pattern, %opts)';
+    ${^TAINT} and &_catch_tainted_args;
 
     my ($sftp, $glob, %opts) = @_;
     return () if $glob eq '';
@@ -1681,6 +1683,7 @@ sub glob {
 
 sub rremove {
     @_ >= 2 or croak 'Usage: $sftp->rremove($dirs, %opts)';
+    ${^TAINT} and &_catch_tainted_args;
 
     my ($sftp, $dirs, %opts) = @_;
 
@@ -1732,8 +1735,8 @@ sub rremove {
 }
 
 sub rget {
-
     @_ >= 3 or croak 'Usage: $sftp->rget($remote, $local, %opts)';
+    ${^TAINT} and &_catch_tainted_args;
 
     my ($sftp, $remote, $local, %opts) = @_;
 
@@ -1775,6 +1778,7 @@ sub rget {
 			 my $fn = $e->{filename};
 			 if ($fn =~ $reremote) {
 			     my $lpath = File::Spec->catdir($local, $1);
+                             ($lpath) = $lpath =~ /(.*)/ if ${^TAINT};
 			     if (-d $lpath) {
 				 $sftp->_set_error(SFTP_ERR_LOCAL_ALREADY_EXISTS,
 						   "directory '$lpath' already exists");
@@ -1808,6 +1812,7 @@ sub rget {
 			     my $fn = $e->{filename};
 			     if ($fn =~ $reremote) {
 				 my $lpath = File::Spec->catfile($local, $1);
+                                 ($lpath) = $lpath =~ /(.*)/ if ${^TAINT};
 				 if (S_ISLNK($e->{a}->perm) and !$ignore_links) {
 				     if (my $link = $sftp->readlink($fn)) {
 					 if (eval {CORE::symlink $link, $lpath}) {
@@ -1859,8 +1864,8 @@ sub rget {
 }
 
 sub rput {
-
     @_ >= 3 or croak 'Usage: $sftp->rput($local, $remote, %opts)';
+    ${^TAINT} and &_catch_tainted_args;
 
     my ($sftp, $local, $remote, %opts) = @_;
 
@@ -3226,6 +3231,8 @@ the ssh process does not terminate by itself in 8 seconds or less.
 
 Support for Windows OSs is still experimental!
 
+Support for taint mode is experimental!
+
 To report bugs, please, send me and email or use
 L<http://rt.cpan.org>.
 
@@ -3244,7 +3251,7 @@ L<Net::SSH2>.
 
 =head1 COPYRIGHT
 
-Copyright (c) 2005-2007 Salvador FandiE<ntilde>o.
+Copyright (c) 2005-2007 Salvador FandiE<ntilde>o (sfandino@yahoo.com).
 
 Copyright (c) 2001 Benjamin Trott, Copyright (c) 2003 David Rolsky.
 

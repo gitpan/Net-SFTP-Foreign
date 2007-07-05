@@ -14,6 +14,8 @@ select STDERR;
 $|=1;
 select STDOUT;
 
+$ENV{PATH} = '/usr/bin:/bin' if ${^TAINT};
+
 my ($server, $sscmd, @ssh, $ssname, $windows);
 
 BEGIN {

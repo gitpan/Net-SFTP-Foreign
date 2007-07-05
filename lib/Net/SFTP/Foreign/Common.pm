@@ -1,11 +1,11 @@
 package Net::SFTP::Foreign::Common;
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 use strict;
 use warnings;
 use Carp;
-use Scalar::Util qw(dualvar);
+use Scalar::Util qw(dualvar tainted);
 use Fcntl qw(S_ISLNK S_ISDIR);
 
 use Net::SFTP::Foreign::Helpers qw(_gen_wanted _ensure_list);
@@ -24,8 +24,13 @@ my %status_str = ( SSH2_FX_OK, "OK",
 sub _set_status {
     my ($sftp, $code, $str) = @_;
     if ($code) {
-	$str = $status_str{$code} unless defined $str;
-	$str = "Unknown status ($code)" unless defined $str;
+        if (defined $str) {
+            ($str) = $str =~ /(.*)/
+                if (${^TAINT} && tainted $str);
+        }
+        else {
+            $str = $status_str{$code} || "Unknown status ($code)";
+        }
 	return $sftp->{_status} = dualvar($code, $str);
     }
     else {
@@ -38,7 +43,11 @@ sub status { shift->{_status} }
 sub _set_error {
     my ($sftp, $code, $str) = @_;
     if ($code) {
-	unless (defined $str) {
+        if (defined $str) {
+            ($str) = $str =~ /(.*)/
+                if (${^TAINT} && tainted $str);
+        }
+        else {
 	    $str = $code ? "Unknown error $code" : "OK";
 	}
 	return $sftp->{_error} = dualvar $code, $str;

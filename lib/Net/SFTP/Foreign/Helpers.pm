@@ -1,10 +1,14 @@
 package Net::SFTP::Foreign::Helpers;
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 use strict;
 use warnings;
-use Carp;
+use Carp qw(croak carp);
+
+our @CARP_NOT = qw(Net::SFTP::Foreign);
+
+use Scalar::Util qw(tainted);
 
 require Exporter;
 our @ISA = qw(Exporter);
@@ -12,7 +16,9 @@ our @EXPORT = qw( _do_nothing
 		  _sort_entries
 		  _gen_wanted
 		  _ensure_list
-		  _glob_to_regex );
+		  _glob_to_regex
+                  _tcroak
+                  _catch_tainted_args);
 
 sub _do_nothing {}
 
@@ -130,6 +136,40 @@ sub _glob_to_regex {
     croak "invalid glob pattern" if $in_curlies;
 
     $ignore_case ? qr/^$regex$/i : qr/^$regex$/;
+}
+
+sub _tcroak {
+    if (${^TAINT} > 0) {
+        goto &croak;
+    }
+    if (${^TAINT} < 0) {
+        goto &carp;
+    }
+}
+
+sub _catch_tainted_args {
+    my $i;
+    for (@_) {
+        next unless $i++;
+        if (tainted $_) {
+            my (undef, undef, undef, $subn) = caller 1;
+            my $msg = ( $subn =~ /::([a-z]\w*)$/
+                        ? "Insecure argument '$_' on '$1' method call"
+                        : "Insecure argument '$_' on method call" );
+            _tcroak($msg);
+        }
+        elsif (ref($_)) {
+            for (eval { values %$_ }) {
+                if (tainted $_) {
+                    my (undef, undef, undef, $subn) = caller 1;
+                    my $msg = ( $subn =~ /::([a-z]\w*)$/
+                                ? "Insecure argument on '$1' method call"
+                                : "Insecure argument on method call" );
+                    _tcroak($msg);
+                }
+            }
+        }
+    }
 }
 
 1;

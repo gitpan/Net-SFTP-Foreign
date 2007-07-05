@@ -1,15 +1,20 @@
 Revision history for Net::SFTP::Foreign
 
-1.25  19 Jun 2007
+1.26  5 Jul, 2007
+        - my email was missing from the docs
+        - make int work under taint checking (experimental feature).
+        - work around bug in dualvar under taint checking
+
+1.25  19 Jun, 2007
         - remove some obsolete tests not working on 5.9.x
 
-1.24  18 Jun 2007
+1.24  18 Jun, 2007
         - DESTROY was messing up $@ (bug reported by Kai Grossjohann)
         - set $SIG{PIPE} handler inside _do_io to catch IO errors
         - don't execute external command when transport option is used
           on constructor
 
-1.23  23 May 2007
+1.23  23 May, 2007
         - release as stable!
         - some doc improvements
 
