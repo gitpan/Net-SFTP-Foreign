@@ -1,5 +1,9 @@
 Revision history for Net::SFTP::Foreign
 
+1.27  7 Jul, 2007
+	- catch insecure $ENV{PATH} under taint mode (bug reported by
+	  jmarshll).
+
 1.26  5 Jul, 2007
         - my email was missing from the docs
         - make int work under taint checking (experimental feature).

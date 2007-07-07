@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign::Helpers;
 
-our $VERSION = '0.03';
+our $VERSION = '1.27';
 
 use strict;
 use warnings;
@@ -140,9 +140,11 @@ sub _glob_to_regex {
 
 sub _tcroak {
     if (${^TAINT} > 0) {
+	push @_, " while running with -T switch";
         goto &croak;
     }
     if (${^TAINT} < 0) {
+	push @_, " while running with -t switch";
         goto &carp;
     }
 }

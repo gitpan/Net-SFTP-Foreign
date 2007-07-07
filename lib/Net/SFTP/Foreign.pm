@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.26';
+our $VERSION = '1.27';
 
 use strict;
 use warnings;
@@ -10,6 +10,7 @@ use Fcntl qw(:mode O_NONBLOCK F_SETFL F_GETFL);
 use IPC::Open2;
 use Symbol ();
 use Errno ();
+use Scalar::Util;
 
 our $debug;
 our $dirty_cleanup;
@@ -277,6 +278,10 @@ sub new {
                                              : ($transport, $transport));
     }
     else {
+	if (${^TAINT} and Scalar::Util::tainted($ENV{PATH})) {
+	    _tcroak('Insecure $ENV{PATH}')
+	}
+
         my $pid = $$;
         $sftp->{pid} = eval { open2($sftp->{ssh_in}, $sftp->{ssh_out}, @open2_cmd) };
         if ($pid != $$) { # that's to workaround a bug in IPC::Open3:
