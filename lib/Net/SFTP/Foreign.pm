@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.27';
+our $VERSION = '1.28';
 
 use strict;
 use warnings;
@@ -282,6 +282,9 @@ sub new {
 	    _tcroak('Insecure $ENV{PATH}')
 	}
 
+        local $@;
+        local $SIG{__DIE__};
+
         my $pid = $$;
         $sftp->{pid} = eval { open2($sftp->{ssh_in}, $sftp->{ssh_out}, @open2_cmd) };
         if ($pid != $$) { # that's to workaround a bug in IPC::Open3:
@@ -317,6 +320,7 @@ sub DESTROY {
         }
         else {
             local $@;
+            local $SIG{__DIE__};
 	    for my $sig (0, 1, 1, 9, 9) {
                 if ($sig) {
                     kill $sig, $pid
@@ -1107,7 +1111,7 @@ sub _gen_getpath_method {
 ## SSH2_FXP_RENAME (18)
 # true on success, undef on failure
 sub rename {
-    @_ == 2 or croak 'Usage: $sftp->rename($old, $new)';
+    @_ == 3 or croak 'Usage: $sftp->rename($old, $new)';
     ${^TAINT} and &_catch_tainted_args;
 
     my ($sftp, $old, $new) = @_;
@@ -1820,10 +1824,14 @@ sub rget {
                                  ($lpath) = $lpath =~ /(.*)/ if ${^TAINT};
 				 if (S_ISLNK($e->{a}->perm) and !$ignore_links) {
 				     if (my $link = $sftp->readlink($fn)) {
-					 if (eval {CORE::symlink $link, $lpath}) {
-					     $count++;
-					     return undef;
-					 }
+                                         {
+                                             local $@;
+                                             local $SIG{__DIE__};
+                                             if (eval {CORE::symlink $link, $lpath}) {
+                                                 $count++;
+                                                 return undef;
+                                             }
+                                         }
 					 $sftp->_set_error(SFTP_ERR_LOCAL_SYMLINK_FAILED,
 							   "creation of symlink '$lpath' failed: $!");
 				     }

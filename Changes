@@ -1,5 +1,10 @@
 Revision history for Net::SFTP::Foreign
 
+1.28
+        - argument checking in rename was wrong (reported by Greg
+          Howard)
+        - disable DIE custom handlers when using eval
+
 1.27  7 Jul, 2007
 	- catch insecure $ENV{PATH} under taint mode (bug reported by
 	  jmarshll).

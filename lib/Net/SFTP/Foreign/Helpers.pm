@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign::Helpers;
 
-our $VERSION = '1.27';
+our $VERSION = '1.28';
 
 use strict;
 use warnings;
@@ -26,6 +26,8 @@ sub _do_nothing {}
     my $has_sk;
     sub _has_sk {
 	unless (defined $has_sk) {
+            local $@;
+            local $SIG{__DIE__};
 	    eval { require Sort::Key };
 	    $has_sk = ($@ eq '');
 	}
@@ -66,7 +68,10 @@ sub _gen_wanted {
 sub _ensure_list {
     my $l = shift;
     return () unless defined $l;
-    return @$l if eval { @$l >= 0};
+    local $@;
+    local $SIG{__DIE__};
+    local $SIG{__WARN__};
+    return @$l if eval { @$l >= 0 };
     return ($l);
 }
 
@@ -161,6 +166,8 @@ sub _catch_tainted_args {
             _tcroak($msg);
         }
         elsif (ref($_)) {
+            local $@;
+            local $SIG{__DIE__};
             for (eval { values %$_ }) {
                 if (tainted $_) {
                     my (undef, undef, undef, $subn) = caller 1;

@@ -108,7 +108,7 @@ plan skip_all => "tests not supported on inferior OS"
 plan skip_all => "sftp-server not found"
     unless defined $sscmd;
 
-plan tests => 264;
+plan tests => 272;
 
 use_ok('Net::SFTP::Foreign');
 use Net::SFTP::Foreign::Constants qw(:flags);
@@ -138,7 +138,8 @@ my $dlfn = File::Spec->catfile($lcwd, 'data.l');
 my $dlfn1 = File::Spec->catfile($lcwd, 'data1.l');
 my $drfn = File::Spec->catfile($rcwd, 'data.r');
 my $drfn_l = File::Spec->catfile($lcwd, 'data.r');
-
+my $drfn1 = "$drfn.1";
+my $drfn1_l = "$drfn_l.1";
 my $drdir_l = File::Spec->catdir($lcwd, 'testdir');
 my $drdir = File::Spec->catdir($rcwd, 'testdir');
 
@@ -146,10 +147,13 @@ for my $i (1..8) {
     mktestfile($dlfn, $i * 4000,
 	       "this is just testing data... foo bar doz wahtever... ");
 
-    ok ($sftp->put($dlfn, $drfn), "put - $i");
+    ok ($sftp->put($dlfn, $drfn1), "put - $i");
     diag ($sftp->error) if $sftp->error;
 
-    ok(!filediff($dlfn, $drfn_l), "put - file content - $i");
+    ok(!filediff($dlfn, $drfn1_l), "put - file content - $i");
+
+    ok($sftp->rename($drfn1, $drfn));
+    diag ($sftp->error) if $sftp->error;
 
     ok (my $attr = $sftp->stat($drfn), "stat - $i");
 
