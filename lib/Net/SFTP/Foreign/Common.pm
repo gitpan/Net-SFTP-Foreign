@@ -101,15 +101,20 @@ sub _call_on_error {
 # this method code is a little convoluted because we are trying to
 # keep in memory as few entries as possible!!!
 sub find {
-    my ($self, $dirs, %opts) = @_;
+    @_ >= 1 or croak 'Usage: $sftp->find($remote_dirs, %opts)';
+
+    my $self = shift;
+    my %opts = @_ & 1 ? ('dirs', @_) : @_;
 
     $self->_set_error;
     $self->_set_status;
 
+    my $dirs = delete $opts{dirs};
     my $follow_links = delete $opts{follow_links};
     my $on_error = delete $opts{on_error};
     my $realpath = delete $opts{realpath};
     my $ordered = delete $opts{ordered};
+    my $names_only = delete $opts{names_only};
     my $atomic_readdir = delete $opts{atomic_readdir};
     my $wanted = _gen_wanted( delete $opts{wanted},
 			      delete $opts{no_wanted} );
@@ -117,6 +122,8 @@ sub find {
 			       delete $opts{no_descend} );
 
     %opts and croak "invalid option(s) '".CORE::join("', '", keys %opts)."'";
+
+    $dirs = '.' unless defined $dirs;
 
     my $wantarray = wantarray;
     my (@res, $res);
@@ -152,7 +159,11 @@ sub find {
 		
 	    if (!$wanted or $wanted->($self, $entry)) {
 		if ($wantarray) {
-		    push @res, $entry;
+                    push @res, ( $names_only
+                                 ? ( exists $entry->{realpath}
+                                     ? $entry->{realpath}
+                                     : $entry->{filename} )
+                                 : $entry )
 		}
 		else {
 		    $res++;

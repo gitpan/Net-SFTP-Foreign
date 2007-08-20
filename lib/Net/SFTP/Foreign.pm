@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.28';
+our $VERSION = '1.29';
 
 use strict;
 use warnings;
@@ -278,9 +278,9 @@ sub new {
                                              : ($transport, $transport));
     }
     else {
-	if (${^TAINT} and Scalar::Util::tainted($ENV{PATH})) {
-	    _tcroak('Insecure $ENV{PATH}')
-	}
+        if (${^TAINT} and Scalar::Util::tainted($ENV{PATH})) {
+            _tcroak('Insecure $ENV{PATH}')
+        }
 
         local $@;
         local $SIG{__DIE__};
@@ -312,35 +312,37 @@ sub DESTROY {
     my $sftp = shift;
     my $pid = $sftp->{pid};
     if (defined $pid) {
-	close $sftp->{ssh_out} if defined $sftp->{ssh_out};
-	close $sftp->{ssh_in} if (defined $sftp->{ssh_in} and !$windows);
+        local $?;
+        local $!;
+        close $sftp->{ssh_out} if defined $sftp->{ssh_out};
+        close $sftp->{ssh_in} if (defined $sftp->{ssh_in} and !$windows);
         if ($windows) {
-	    kill 1, $pid
-		and waitpid($pid, 0);
+            kill 1, $pid
+                and waitpid($pid, 0);
         }
         else {
             local $@;
             local $SIG{__DIE__};
-	    for my $sig (0, 1, 1, 9, 9) {
+            for my $sig (0, 1, 1, 9, 9) {
                 if ($sig) {
                     kill $sig, $pid
                 }
                 else {
                     next if $dirty_cleanup
                 }
-		eval {
-		    local $SIG{ALRM} = sub { die "timeout\n" };
-		    alarm 8;
-		    waitpid($pid, 0);
-		    alarm 0;
-		};
-		if ($@) {
-		    next if $@ =~ /^timeout/;
-		    die $@;
-		}
-		last;
-	    }
-	}
+                eval {
+                    local $SIG{ALRM} = sub { die "timeout\n" };
+                    alarm 8;
+                    waitpid($pid, 0);
+                    alarm 0;
+                };
+                if ($@) {
+                    next if $@ =~ /^timeout/;
+                    die $@;
+                }
+                last;
+            }
+        }
     }
 }
 
@@ -365,6 +367,15 @@ sub _init {
 			  "bad packet type, expecting SSH2_FXP_VERSION, got $type");
     }
     return undef;
+}
+
+sub _rel2abs {
+    my ($sftp, $path) = @_;
+    if (defined $sftp->{cwd} and $path !~/^\//) {
+        # carp "sftp->rel2abs($path) => $sftp->{cwd}/$path\n";
+        return "$sftp->{cwd}/$path"
+    }
+    return $path
 }
 
 # helper methods:
@@ -471,6 +482,30 @@ sub _check_status_ok {
     return undef;
 }
 
+sub setcwd {
+
+    @_ == 2 or croak 'Usage: $sftp->setcwd($path)';
+    ${^TAINT} and &_catch_tainted_args;
+
+    my ($sftp, $cwd) = @_;
+    if (defined $cwd) {
+        $cwd = $sftp->realpath($cwd);
+        return undef unless defined $cwd;
+        $sftp->{cwd} = $cwd;
+    }
+    else {
+        delete $sftp->{cwd};
+        return $sftp->cwd;
+    }
+}
+
+sub cwd {
+    @_ == 1 or croak 'Usage: $sftp->cwd()';
+
+    my $sftp = shift;
+    return defined $sftp->{cwd} ? $sftp->{cwd} : $sftp->realpath('');
+}
+
 ## SSH2_FXP_OPEN (3)
 # returns handle on success, undef on failure
 sub open {
@@ -478,8 +513,8 @@ sub open {
 	or croak 'Usage: $sftp->open($path [, $flags [, $attrs]])';
     ${^TAINT} and &_catch_tainted_args;
 
-    my $sftp = shift;
-    my($path, $flags, $a) = @_;
+    my ($sftp, $path, $flags, $a) = @_;
+    $path = $sftp->_rel2abs($path);
     $flags ||= 0;
     $a ||= Net::SFTP::Foreign::Attributes->new;
     my $id = $sftp->_queue_new_msg(SSH2_FXP_OPEN, str => $path,
@@ -505,10 +540,12 @@ sub opendir {
     ${^TAINT} and &_catch_tainted_args;
 
     my $sftp = shift;
-    my $id = $sftp->_queue_str_request(SSH2_FXP_OPENDIR, @_);
+    my $path = shift;
+    my $abspath = $sftp->_rel2abs($path);
+    my $id = $sftp->_queue_str_request(SSH2_FXP_OPENDIR, $abspath, @_);
 
     my $rid = $sftp->_get_handle($id, SFTP_ERR_REMOTE_OPENDIR_FAILED,
-				 "Couldn't open remote dir '$_[0]'");
+				 "Couldn't open remote dir '$path'");
     defined $rid
 	or return undef;
 
@@ -875,12 +912,12 @@ sub getc {
 sub _gen_stat_method {
     my ($code, $error, $errstr) = @_;
     return sub {
-	(@_ >= 2 and @_ <= 3)
-	    or croak 'Usage: $sftp->stat($path)';
+	@_ == 2 or croak 'Usage: $sftp->stat|lstat($path)';
         ${^TAINT} and &_catch_tainted_args;
 
-	my $sftp = shift;
-	my $id = $sftp->_queue_str_request($code, @_);
+	my ($sftp, $path) = @_;
+        $path = $sftp->_rel2abs($path);
+	my $id = $sftp->_queue_str_request($code, $path);
 	if (my $msg = $sftp->_get_msg_and_check(SSH2_FXP_ATTRS, $id,
 						$error, $errstr)) {
 	    return $msg->get_attributes;
@@ -901,8 +938,7 @@ sub _gen_stat_method {
 			 "Couldn't stat remote file (stat)");
 
 sub fstat {
-    (@_ >= 2 and @_ <= 3)
-	or croak 'Usage: $sftp->fstat($path)';
+    @_ == 2 or croak 'Usage: $sftp->fstat($path)';
     ${^TAINT} and &_catch_tainted_args;
 
     my $sftp = shift;
@@ -922,11 +958,12 @@ sub fstat {
 sub _gen_remove_method {
     my($code, $error, $errstr) = @_;
     return sub {
-	@_ == 2 or croak 'Usage: $sftp->some_method($str)';
+	@_ == 2 or croak 'Usage: $sftp->remove|rmdir($path)';
         ${^TAINT} and &_catch_tainted_args;
 
-        my $sftp = shift;
-        my $id = $sftp->_queue_str_request($code, @_);
+        my ($sftp, $path) = @_;
+        $path = $sftp->_rel2abs($path);
+        my $id = $sftp->_queue_str_request($code, $path);
         return $sftp->_check_status_ok($id, $error, $errstr);
     };
 }
@@ -945,12 +982,13 @@ sub _gen_remove_method {
 
 sub mkdir {
     (@_ >= 2 and @_ <= 3)
-        or croak 'Usage: $sftp->mkdir($str [, $attrs])';
+        or croak 'Usage: $sftp->mkdir($path [, $attrs])';
     ${^TAINT} and &_catch_tainted_args;
 
-    my ($sftp, $name, $attrs) = @_;
+    my ($sftp, $path, $attrs) = @_;
+    $path = $sftp->_rel2abs($path);
     $attrs = _empty_attributes unless defined $attrs;
-    my $id = $sftp->_queue_str_request(SSH2_FXP_MKDIR, $name, $attrs);
+    my $id = $sftp->_queue_str_request(SSH2_FXP_MKDIR, $path, $attrs);
     return $sftp->_check_status_ok($id,
                                    SFTP_ERR_REMOTE_MKDIR_FAILED,
                                    "Couldn't create remote directory");
@@ -960,8 +998,9 @@ sub setstat {
     @_ == 3 or croak 'Usage: $sftp->setstat($str, $attrs)';
     ${^TAINT} and &_catch_tainted_args;
 
-    my ($sftp, $name, $attrs) = @_;
-    my $id = $sftp->_queue_str_request(SSH2_FXP_SETSTAT, $name, $attrs);
+    my ($sftp, $path, $attrs) = @_;
+    $path = $sftp->_rel2abs($path);
+    my $id = $sftp->_queue_str_request(SSH2_FXP_SETSTAT, $path, $attrs);
     return $sftp->_check_status_ok($id,
                                    SFTP_ERR_REMOTE_SETSTAT_FAILED,
                                    "Couldn't setstat remote file (setstat)'");
@@ -1082,7 +1121,7 @@ sub _gen_getpath_method {
         ${^TAINT} and &_catch_tainted_args;
 
 	my ($sftp, $path) = @_;
-	
+	$path = $sftp->_rel2abs($path);
 	my $id = $sftp->_queue_str_request($code, $path);
 
 	if (my $msg = $sftp->_get_msg_and_check(SSH2_FXP_NAME, $id,
@@ -1115,6 +1154,8 @@ sub rename {
     ${^TAINT} and &_catch_tainted_args;
 
     my ($sftp, $old, $new) = @_;
+    $old = $sftp->_rel2abs($old);
+    $new = $sftp->_rel2abs($new);
     my $id = $sftp->_queue_new_msg(SSH2_FXP_RENAME,
 				  str => $old,
 				  str => $new);
@@ -1126,16 +1167,17 @@ sub rename {
 ## SSH2_FXP_SYMLINK (20)
 # true on success, undef on failure
 sub symlink {
-    @_ == 3 or croak 'Usage: $sftp->symlink($target, $new)';
+    @_ == 3 or croak 'Usage: $sftp->symlink($sl, $target)';
     ${^TAINT} and &_catch_tainted_args;
 
-    my ($sftp, $target, $new) = @_;
+    my ($sftp, $sl, $target) = @_;
+    $sl = $sftp->_rel2abs($sl);
     my $id = $sftp->_queue_new_msg(SSH2_FXP_SYMLINK,
-				  str => $new,
-				  str => $target);
+				  str => $target,
+				  str => $sl);
 
     return $sftp->_check_status_ok($id, SFTP_ERR_REMOTE_SYMLINK_FAILED,
-				   "Couldn't create symlink '$new' pointing to '$target'");
+				   "Couldn't create symlink '$sl' pointing to '$target'");
 }
 
 sub _gen_save_status_method {
@@ -1170,6 +1212,7 @@ sub get {
     ${^TAINT} and &_catch_tainted_args;
 
     my ($sftp, $remote, $local, %opts) = @_;
+    $remote = $sftp->_rel2abs($remote);
 
     $sftp->_set_status;
     $sftp->_set_error;
@@ -1374,6 +1417,7 @@ sub get_content {
     ${^TAINT} and &_catch_tainted_args;
 
     my ($sftp, $name) = @_;
+    $name = $sftp->_rel2abs($name);
     my @data;
 
     my $rfh = $sftp->open($name)
@@ -1387,6 +1431,7 @@ sub put {
     ${^TAINT} and &_catch_tainted_args;
 
     my ($sftp, $local, $remote, %opts) = @_;
+    $remote = $sftp->_rel2abs($remote);
 
     $sftp->_set_error;
     $sftp->_set_status;
@@ -1530,22 +1575,27 @@ sub put {
 }
 
 sub ls {
-    @_ >= 2 or croak 'Usage: $sftp->ls($remote, %opts)';
+    @_ >= 1 or croak 'Usage: $sftp->ls($remote_dir, %opts)';
     ${^TAINT} and &_catch_tainted_args;
 
-    my ($sftp, $remote, %opts) = @_;
+    my $sftp = shift;
+    my %opts = @_ & 1 ? (dir => @_) : @_;
 
+    my $dir = delete $opts{dir};
     my $ordered = delete $opts{ordered};
     my $follow_links = delete $opts{follow_links};
     my $atomic_readdir = delete $opts{atomic_readdir};
-
+    my $names_only = delete $opts{names_only};
     my $wanted = delete $opts{_wanted} ||
 	_gen_wanted(delete $opts{wanted},
 		    delete $opts{no_wanted});
 
     %opts and croak "invalid option(s) '".CORE::join("', '", keys %opts)."'";
 
-    my $rdh = $sftp->opendir($remote);
+    $dir = '.' unless defined $dir;
+    $dir = $sftp->_rel2abs($dir);
+
+    my $rdh = $sftp->opendir($dir);
     return unless defined $rdh;
 
     my $rdid = $sftp->_rdid($rdh);
@@ -1557,7 +1607,7 @@ sub ls {
 
 	if (my $msg = $sftp->_get_msg_and_check(SSH2_FXP_NAME, $id,
 						SFTP_ERR_REMOTE_READDIR_FAILED,
-						"Couldn't read directory '$remote'" )) {
+						"Couldn't read directory '$dir'" )) {
 
 	    my $count = $msg->get_int32 or last;
 
@@ -1568,7 +1618,7 @@ sub ls {
 
 		if ($follow_links and S_ISLNK($entry->{a}->perm)) {
 		    my $fn = $entry->{filename};
-		    if (my $a = $sftp->stat($sftp->join($remote, $fn))) {
+		    if (my $a = $sftp->stat($sftp->join($dir, $fn))) {
 			$entry->{a} = $a;
 		    }
 		    else {
@@ -1578,7 +1628,7 @@ sub ls {
 		}
 
 		if ($atomic_readdir or !$wanted or $wanted->($sftp, $entry)) {
-		    push @dir, $entry;
+		    push @dir, ($names_only ? $entry->{filename} : $entry);
 		}
             }
 	}
@@ -1595,7 +1645,14 @@ sub ls {
 	    @dir = grep { $wanted->($sftp, $_) } @dir;
 	}
 
-	_sort_entries \@dir if $ordered;
+        if ($ordered) {
+            if ($names_only) {
+                @dir = sort @dir;
+            }
+            else {
+                _sort_entries \@dir;
+            }
+        }
 	
 	return \@dir;
     }
@@ -2471,6 +2528,20 @@ dualvar that yields the status string when used as a string.
 Usually C<$sftp-E<gt>error> should be checked first to see if there was
 any error and then C<$sftp-E<gt>status> to find out its low level cause.
 
+=item $sftp-E<gt>cwd
+
+Returns the remote current working directory.
+
+When a relative remote path is passed to any of the methods on this
+package, this directory is used to compose the absolute path.
+
+=item $sftp-E<gt>setcwd($dir)
+
+Changes the remote current working directory. The remote directory
+should exist, otherwise the call fails.
+
+Returns the new remote current working directory or undef on failure.
+
 =item $sftp-E<gt>get($remote, $local, %options)
 
 Copies remote file C<$remote> to local $local. By default file
@@ -2608,7 +2679,9 @@ argument is used as its textual value.
 
 =item $sftp-E<gt>ls($remote, %opts)
 
-Fetches a directory listing of the remote B<directory> C<$remote>.
+Fetches a directory listing of the remote B<directory> C<$remote>. If
+C<$remote> is not given, the remote current working directory is
+listed.
 
 Returns a reference to a list of entries. Every entry is a reference
 to a hash with three keys: C<filename>, the name of the entry;
@@ -2675,7 +2748,7 @@ pointing to non existant places.
 
 =item atomic_readdir =E<gt> 1
 
-Reading a directory is not an atomic SFTP operation and the protocol
+reading a directory is not an atomic SFTP operation and the protocol
 draft does not define what happens if C<readdir> requests and write
 operations (for instance C<remove> or C<open>) affecting the same
 directory are intermixed.
@@ -2684,13 +2757,23 @@ This flag ensures that no callback call (C<wanted>, C<no_wanted>) is
 performed in the middle of reading a directory and has to be set if
 any of the callbacks can modify the file system.
 
+=item names_only =E<gt> 1
+
+makes the method return a simple array containing the file names from
+the remote directory only. For instance, these two sentences are
+equivalent:
+
+  my $ls1 = $sftp->ls('.', names_only => 1);
+
+  my $ls2 = map { $_->{filename} } $sftp->ls('.');
+
 =back
 
 =item $sftp-E<gt>find($path, %opts)
 
 =item $sftp-E<gt>find(\@paths, %opts)
 
-Does a recursive seach over the given directory C<$path> (or
+Does a recursive search over the given directory C<$path> (or
 directories C<@path>) and returns a list of the entries found or the
 total number of them on scalar context.
 
@@ -2793,6 +2876,15 @@ discarded on a C<descend> rule and vice-versa.
 =item atomic_readdir =E<gt> 1
 
 see C<ls> method documentation.
+
+=item names_only =E<gt> 1
+
+makes the method return a list with the names of the files only (see C<ls>
+method documentation).
+
+equivalent:
+
+  my $ls1 = $sftp->ls('.', names_only => 1);
 
 =back
 
@@ -3142,10 +3234,15 @@ simbolic link is pointing.
 
 Returns the target path on success and undef on failure.
 
-=item $sftp-E<gt>symlink($target, $path)
+=item $sftp-E<gt>symlink($sl, $target)
 
 Sends a C<SSH_FXP_SYMLINK> command to create a new symbolic link
-C<$path> pointing to C<$target>.
+C<$sl> pointing to C<$target>.
+
+C<$target> is stored as-is, without any path expansion taken place on
+it. User C<realpath> to normalize it:
+
+  $sftp->symlink("foo.lnk" => $sftp->realpath("../bar"))
 
 =back
 
@@ -3175,7 +3272,7 @@ hardcode the location of C<ssh> inside your script, for instance:
 
 B<Q>: I noticed that the examples/synopsis that is provided has no
 mention of using a password to login. How is one, able to login to a
-SFTP server that requires uid/pwd for login?
+SFTP server that requires uid/passwd for login?
 
 B<A>: You can't! ...
 
@@ -3245,6 +3342,8 @@ the ssh process does not terminate by itself in 8 seconds or less.
 Support for Windows OSs is still experimental!
 
 Support for taint mode is experimental!
+
+Support for setcwd/cwd is also experimental!
 
 To report bugs, please, send me and email or use
 L<http://rt.cpan.org>.

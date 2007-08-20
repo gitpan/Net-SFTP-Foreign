@@ -108,7 +108,7 @@ plan skip_all => "tests not supported on inferior OS"
 plan skip_all => "sftp-server not found"
     unless defined $sscmd;
 
-plan tests => 272;
+plan tests => 541;
 
 use_ok('Net::SFTP::Foreign');
 use Net::SFTP::Foreign::Constants qw(:flags);
@@ -132,237 +132,263 @@ ok (defined $sftp, "creating object");
 
 my $lcwd = File::Spec->rel2abs('t');
 my $rcwd = $sftp->realpath($lcwd);
+
 ok (defined $rcwd, "realpath");
 
-my $dlfn = File::Spec->catfile($lcwd, 'data.l');
-my $dlfn1 = File::Spec->catfile($lcwd, 'data1.l');
-my $drfn = File::Spec->catfile($rcwd, 'data.r');
-my $drfn_l = File::Spec->catfile($lcwd, 'data.r');
-my $drfn1 = "$drfn.1";
-my $drfn1_l = "$drfn_l.1";
-my $drdir_l = File::Spec->catdir($lcwd, 'testdir');
-my $drdir = File::Spec->catdir($rcwd, 'testdir');
-
-for my $i (1..8) {
-    mktestfile($dlfn, $i * 4000,
-	       "this is just testing data... foo bar doz wahtever... ");
-
-    ok ($sftp->put($dlfn, $drfn1), "put - $i");
-    diag ($sftp->error) if $sftp->error;
-
-    ok(!filediff($dlfn, $drfn1_l), "put - file content - $i");
-
-    ok($sftp->rename($drfn1, $drfn));
-    diag ($sftp->error) if $sftp->error;
-
-    ok (my $attr = $sftp->stat($drfn), "stat - $i");
-
-    is ($attr->size, (stat($dlfn))[7], "stat - size - $i");
-
-    ok (!$sftp->put($dlfn, $drfn, overwrite => 0), "no overwrite - $i");
-    is (int $sftp->error, Net::SFTP::Foreign::Constants::SFTP_ERR_REMOTE_OPEN_FAILED(), "no overwrite - error - $i");
-
-    ok ($sftp->get($drfn, $dlfn1), "get - $i");
-    diag ($sftp->error) if $sftp->error;
-
-    ok(!filediff($drfn_l, $dlfn1), "get - file content - $i");
-
-    unlink $dlfn;
-    unlink $dlfn1;
-    unlink $drfn_l;
-}
-
-# mkdir and rmdir
-
-rmdir $drdir_l;
-
-ok($sftp->mkdir($drdir), "mkdir 1");
-ok((-d $drdir_l), "mkdir 2");
-ok($sftp->rmdir($drdir), "rmdir 1");
-ok(!(-d $drdir_l), "rmdir 2");
-
-my $attr = Net::SFTP::Foreign::Attributes->new;
-$attr->set_perm(0700);
-
-ok($sftp->mkdir($drdir, $attr), "mkdir 3");
-ok((-d $drdir_l), "mkdir 4");
-
-my @stat = stat $drdir_l;
-is($stat[2] & 0777, 0700, "mkdir 5");
-
-$attr->set_perm(0770);
-ok($sftp->setstat($drdir, $attr), "setstat 1");
-@stat = stat $drdir_l;
-is($stat[2] & 0777, 0770, "setstat 2");
-
-ok($sftp->rmdir($drdir), "rmdir 3");
-ok(!(-d $drdir_l), "rmdir 4");
-
-# reconnect
-$sftp = eval { Net::SFTP::Foreign->new(@new_args) };
-diag($@) if $@;
-
-ok (defined $sftp, "creating object 2");
-
-my $fh = $sftp->open($drfn, SSH2_FXF_CREAT|SSH2_FXF_WRITE);
-ok ($fh, "open write file");
-
 my @data = <DATA>;
-print $fh $_ for @data;
-ok((print $fh @data, @data, @data, @data), "write to file 2");
-print $fh $_ for @data;
-ok((print $fh @data, @data, @data, @data), "write to file 2");
-ok (close $fh);
 
-my @all = (@data) x 10;
+for my $setcwd (0, 1) {
+    my $orcwd = $rcwd;
 
-$fh = $sftp->open($drfn);
-ok($fh, "open read file");
-
-my @read = <$fh>;
-our ($a, $b);
-# D("@read", "@all") and diag "got: $a\nexp: $b\n\n";
-
-is("@read", "@all", "readline list context");
-ok(close($fh), "close file");
-
-$fh = $sftp->open($drfn);
-ok($fh, "open read file 2");
-
-@read = ();
-while (<$fh>) {
-    push @read, $_;
-}
-is("@read", "@all", "readline scalar context");
-ok(close($fh), "close file");
-
-$fh = $sftp->open($drfn, SSH2_FXF_CREAT|SSH2_FXF_WRITE);
-ok ($fh, "open write file");
-
-my $all = join('', ((@all) x 10));
-my $cp = $all;
-while (length $all) {
-    $sftp->write($fh, substr($all, 0, 1 + int(rand 64000), ''));
-}
-ok (close($fh), "close write file");
-
-$fh = $sftp->open($drfn);
-ok($fh, "open read file 3");
-
-ok(!$sftp->eof($fh), "not at eof");
-
-while (1) {
-    my $data = $sftp->read($fh, 1+int(rand 64000));
-    last unless defined $data;
-    $all .= $data;
-}
-
-is($all, $cp, "write and read chunks");
-
-ok(eof($fh), "at eof");
-
-for my $pos (0, 1000, 0, 234, 4500, 1025) {
-    my $d1;
-    is(seek($fh, $pos, 0), $pos, "seek");
-    is(read($fh, my $data, $pos), $pos, "read");
-    is($d1 = $sftp->sftpread($fh, $pos, $pos), $data, "sftpread");
-    # D($d1, $data) and diag "got: $a\nexp: $b\n\n";
-
-    my $pos1 = $pos + length $data;
-    for my $off (0, -1000, 234, 4500, -200, 1025) {
-	next unless $pos1 + $off >= 0;
-	$pos1 += $off;
-
-	is(seek($fh, $off, 1), $pos1, "seek - 2");
-	is(tell($fh), $pos1, "tell"); # if $pos1 > 2000;
-	is(read($fh, $data, $pos), $pos, "read - 2 ($pos1, $pos)");
-	is($d1 = $sftp->sftpread($fh, $pos1, $pos), $data, "sftpread - 2 ($pos1, $pos)");
-	# D($d1, $data) and diag "got: $a\nexp: $b\n\n";
-	$pos1 += length $data;
+    if ($setcwd) {
+        $sftp->setcwd($orcwd);
+        $rcwd = '.';
     }
-}
 
-my $ctn = $sftp->get_content($drfn);
-is($ctn, $all, "get_content");
-# D($ctn, $all, -10, 30) and diag "got: $a\nexp: $b\n\n";
+    # print STDERR "cwd: $sftp->{cwd}\n";
 
-is(seek($fh, 0, 0), 0, 'seek - 3');
-my $line = readline $fh;
+    my $dlfn = File::Spec->catfile($lcwd, 'data.l');
+    my $dlfn1 = File::Spec->catfile($lcwd, 'data1.l');
+    my $drfn = File::Spec->catfile($rcwd, 'data.r');
+    my $drfn_l = File::Spec->catfile($lcwd, 'data.r');
+    my $drfn1 = "$drfn.1";
+    my $drfn1_l = "$drfn_l.1";
+    my $drdir_l = File::Spec->catdir($lcwd, 'testdir');
+    my $drdir = File::Spec->catdir($rcwd, 'testdir');
 
-my $wfh = $sftp->open($drfn, SSH2_FXF_WRITE);
-ok($wfh, "open write file 3");
+    for my $i (1..8) {
+        mktestfile($dlfn, $i * 4000,
+                   "this is just testing data... foo bar doz wahtever... ");
 
-ok ($sftp->sftpwrite($wfh, length $line, "HELLO\n"), "sftpwrite");
-$sftp->flush($fh);
-is (scalar getc($fh), 'H', "getc");
-is (scalar readline($fh), "ELLO\n", "readline");
-ok(close($wfh), "close");
+        ok ($sftp->put($dlfn, $drfn1), "put - $i");
+        diag ($sftp->error) if $sftp->error;
 
-ok(seek($fh, -2000, 2), 'seek');
-@all = readline $fh;
+        ok(!filediff($dlfn, $drfn1_l), "put - file content - $i");
 
-{
-    local $/; undef $/;
+        unlink $drfn_l;
+        ok($sftp->rename($drfn1, $drfn), "rename - $i");
+        diag ($sftp->error) if $sftp->error;
+
+        ok (my $attr = $sftp->stat($drfn), "stat - $i");
+
+        is ($attr->size, (stat($dlfn))[7], "stat - size - $i");
+
+        ok (!$sftp->put($dlfn, $drfn, overwrite => 0), "no overwrite - $i");
+        is (int $sftp->error, Net::SFTP::Foreign::Constants::SFTP_ERR_REMOTE_OPEN_FAILED(), "no overwrite - error - $i");
+
+        ok ($sftp->get($drfn, $dlfn1), "get - $i");
+        diag ($sftp->error) if $sftp->error;
+
+        ok(!filediff($drfn_l, $dlfn1), "get - file content - $i");
+
+        unlink $dlfn;
+        unlink $dlfn1;
+        unlink $drfn_l;
+    }
+
+    # mkdir and rmdir
+
+    rmdir $drdir_l;
+
+    ok($sftp->mkdir($drdir), "mkdir 1");
+    ok((-d $drdir_l), "mkdir 2");
+    ok($sftp->rmdir($drdir), "rmdir 1");
+    ok(!(-d $drdir_l), "rmdir 2");
+
+    my $attr = Net::SFTP::Foreign::Attributes->new;
+    $attr->set_perm(0700);
+
+    ok($sftp->mkdir($drdir, $attr), "mkdir 3");
+    ok((-d $drdir_l), "mkdir 4");
+
+    my @stat = stat $drdir_l;
+    is($stat[2] & 0777, 0700, "mkdir 5");
+
+    $attr->set_perm(0770);
+    ok($sftp->setstat($drdir, $attr), "setstat 1");
+    @stat = stat $drdir_l;
+    is($stat[2] & 0777, 0770, "setstat 2");
+
+    ok($sftp->rmdir($drdir), "rmdir 3");
+    ok(!(-d $drdir_l), "rmdir 4");
+
+    # reconnect
+    $sftp = eval { Net::SFTP::Foreign->new(@new_args) };
+    diag($@) if $@;
+
+    ok (defined $sftp, "creating object 2");
+
+    # print STDERR "setcwd=$setcwd ($rcwd=$rcwd)\n";
+    if ($setcwd) {
+        $sftp->setcwd($orcwd);
+    }
+
+    my $fh = $sftp->open($drfn, SSH2_FXF_CREAT|SSH2_FXF_WRITE);
+    ok ($fh, "open write file");
+
+    print $fh $_ for @data;
+    ok((print $fh @data, @data, @data, @data), "write to file 2");
+    print $fh $_ for @data;
+    ok((print $fh @data, @data, @data, @data), "write to file 2");
+    ok (close $fh);
+
+    my @all = (@data) x 10;
+
+    $fh = $sftp->open($drfn);
+    ok($fh, "open read file");
+
+    my @read = <$fh>;
+    our ($a, $b);
+    # D("@read", "@all") and diag "got: $a\nexp: $b\n\n";
+
+    is("@read", "@all", "readline list context");
+    ok(close($fh), "close file");
+
+    $fh = $sftp->open($drfn);
+    ok($fh, "open read file 2");
+
+    @read = ();
+    while (<$fh>) {
+        push @read, $_;
+    }
+    is("@read", "@all", "readline scalar context");
+    ok(close($fh), "close file");
+
+    $fh = $sftp->open($drfn, SSH2_FXF_CREAT|SSH2_FXF_WRITE);
+    ok ($fh, "open write file");
+
+    my $all = join('', ((@all) x 10));
+    my $cp = $all;
+    while (length $all) {
+        $sftp->write($fh, substr($all, 0, 1 + int(rand 64000), ''));
+    }
+    ok (close($fh), "close write file");
+
+    $fh = $sftp->open($drfn);
+    ok($fh, "open read file 3");
+
+    ok(!$sftp->eof($fh), "not at eof");
+
+    while (1) {
+        my $data = $sftp->read($fh, 1+int(rand 64000));
+        last unless defined $data;
+        $all .= $data;
+    }
+
+    is($all, $cp, "write and read chunks");
+
+    ok(eof($fh), "at eof");
+
+    for my $pos (0, 1000, 0, 234, 4500, 1025) {
+        my $d1;
+        is(seek($fh, $pos, 0), $pos, "seek");
+        is(read($fh, my $data, $pos), $pos, "read");
+        is($d1 = $sftp->sftpread($fh, $pos, $pos), $data, "sftpread");
+        # D($d1, $data) and diag "got: $a\nexp: $b\n\n";
+
+        my $pos1 = $pos + length $data;
+        for my $off (0, -1000, 234, 4500, -200, 1025) {
+            next unless $pos1 + $off >= 0;
+            $pos1 += $off;
+
+            is(seek($fh, $off, 1), $pos1, "seek - 2");
+            is(tell($fh), $pos1, "tell"); # if $pos1 > 2000;
+            is(read($fh, $data, $pos), $pos, "read - 2 ($pos1, $pos)");
+            is($d1 = $sftp->sftpread($fh, $pos1, $pos), $data, "sftpread - 2 ($pos1, $pos)");
+            # D($d1, $data) and diag "got: $a\nexp: $b\n\n";
+            $pos1 += length $data;
+        }
+    }
+
+    my $ctn = $sftp->get_content($drfn);
+    is($ctn, $all, "get_content");
+    # D($ctn, $all, -10, 30) and diag "got: $a\nexp: $b\n\n";
+
+    is(seek($fh, 0, 0), 0, 'seek - 3');
+    my $line = readline $fh;
+
+    my $wfh = $sftp->open($drfn, SSH2_FXF_WRITE);
+    ok($wfh, "open write file 3");
+
+    ok ($sftp->sftpwrite($wfh, length $line, "HELLO\n"), "sftpwrite");
+    $sftp->flush($fh);
+    is (scalar getc($fh), 'H', "getc");
+    is (scalar readline($fh), "ELLO\n", "readline");
+    ok(close($wfh), "close");
+
     ok(seek($fh, -2000, 2), 'seek');
-    my $all = readline $fh;
-    is ($all, join('', @all), "read to end of file");
-    is (length $all, 2000, "seek");
+    @all = readline $fh;
+
+    {
+        local $/; undef $/;
+        ok(seek($fh, -2000, 2), 'seek');
+        my $all = readline $fh;
+        is ($all, join('', @all), "read to end of file");
+        is (length $all, 2000, "seek");
+    }
+
+    opendir DIR, $lcwd;
+    my @ld = sort grep !/^\./, readdir DIR;
+    closedir DIR;
+
+    # SKIP: {
+    #    skip "tied directory handles not available on this perl", 3
+    #	unless eval "use 5.9.4; 1";
+    #
+    #    my $rd = $sftp->opendir($rcwd);
+    #    ok($rd, "open remote dir");
+    #
+    #    my @rd = sort grep !/^\./, readdir $rd;
+    #    is("@rd", "@ld", "readdir array");
+    #
+    #    ok (closedir($rd), "close dir");
+    #
+    #};
+
+    # print STDERR "cwd: $sftp->{cwd}\n";
+
+    my $rd = $sftp->opendir($rcwd);
+    ok($rd, "open remote dir 2 - $rcwd");
+
+    my @rd = sort grep !/^\./, (map { $_->{filename} } $sftp->readdir($rd));
+    is("@rd", "@ld", "readdir array 1 - $rcwd");
+    ok($sftp->closedir($rd), "close dir 2");
+
+    my @ls = sort map { $_->{filename} } @{$sftp->ls($rcwd, no_wanted => qr|^\.|)};
+    is ("@ls", "@ld", "ls");
+
+    my @ld1 = sort('t', @ld);
+    my @uns = $sftp->find($rcwd,
+                          wanted => sub { $_[1]->{filename} !~ m|^(?:.*/)?\.[^/]*$| },
+                          descend => sub { $_[1]->{filename} eq $rcwd } );
+
+    push @uns, { filename => 't' } if $setcwd;
+
+    my @find = sort map { $_->{filename} =~ m|(?:.*/)?(.*)$| && $1 } @uns;
+
+    local $" = '|';
+    is ("@find", "@ld1", "find 1");
+
+    @ld1 = @ld;
+    unshift @ld1, 't' unless $setcwd;
+    @find = map { m|(?:.*/)?(.*)$|; $1 }
+        $sftp->find( $rcwd,
+                     names_only => 1,
+                     ordered => 1,
+                     no_wanted => qr|^(?:.*/)?\.[^/]*$|,
+                     no_descend => qr|^(?:.*/)?\.svn$|);
+
+    is ("@find", "@ld1", "find 2");
+
+    my @a = glob "$lcwd/*";
+    is ($sftp->glob("$rcwd/*"), scalar @a, "glob");
+
+    unlink $drfn;
+
+    alarm 0;
+    ok (1, "end");
+
 }
-
-opendir DIR, $lcwd;
-my @ld = sort grep !/^\./, readdir DIR;
-closedir DIR;
-
-# SKIP: {
-#    skip "tied directory handles not available on this perl", 3
-#	unless eval "use 5.9.4; 1";
-#
-#    my $rd = $sftp->opendir($rcwd);
-#    ok($rd, "open remote dir");
-#
-#    my @rd = sort grep !/^\./, readdir $rd;
-#    is("@rd", "@ld", "readdir array");
-#
-#    ok (closedir($rd), "close dir");
-#
-#};
-
-my $rd = $sftp->opendir($rcwd);
-ok($rd, "open remote dir 2");
-
-my @rd = sort grep !/^\./, (map { $_->{filename} } $sftp->readdir($rd));
-is("@rd", "@ld", "readdir array 1");
-ok($sftp->closedir($rd), "close dir 2");
-
-
-my @ls = sort map { $_->{filename} } @{$sftp->ls($rcwd, no_wanted => qr|^\.|)};
-is ("@ls", "@ld", "ls");
-
-my @ld1 = sort('t', @ld);
-my @find = sort map { $_->{filename} =~ m|.*/(.*)$|; $1 }
-    $sftp->find($rcwd,
-		wanted => sub { $_[1]->{filename} !~ m|/\.[^/]*$| },
-		descend => sub { $_[1]->{filename} eq $rcwd } );
-
-is ("@find", "@ld1", "find 1");
-
-@ld1 = ('t', @ld);
-@find = map { $_->{filename} =~ m|.*/(.*)$|; $1 }
-    $sftp->find( $rcwd,
-		 ordered => 1,
-		 no_wanted => qr|/\.[^/]*$|,
-		 no_descend => qr|/\.svn$|);
-
-is ("@find", "@ld1", "find 2");
-
-my @a = glob "$lcwd/*";
-is ($sftp->glob("$rcwd/*"), scalar @a, "glob");
-
-unlink $drfn;
-
-alarm 0;
-ok (1, "end");
-
 
 
 

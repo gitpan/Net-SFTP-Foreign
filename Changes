@@ -1,5 +1,16 @@
 Revision history for Net::SFTP::Foreign
 
+
+1.29  14 Aug, 2007
+        - add support for names_only option to ls and find methods
+        - make ls and find methods default to '.'
+        - DESTROY was also messing with $? and $! values (bug reported
+          by Dave Haywood)
+        - better usage checking for several methods
+        - add support for cwd (experimental)
+        - symlink docs corrected
+        - several other doc corrections
+
 1.28
         - argument checking in rename was wrong (reported by Greg
           Howard)
@@ -11,7 +22,7 @@ Revision history for Net::SFTP::Foreign
 
 1.26  5 Jul, 2007
         - my email was missing from the docs
-        - make int work under taint checking (experimental feature).
+        - make it work under taint checking (experimental feature).
         - work around bug in dualvar under taint checking
 
 1.25  19 Jun, 2007
