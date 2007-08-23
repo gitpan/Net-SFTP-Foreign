@@ -1,5 +1,11 @@
 Revision history for Net::SFTP::Foreign
 
+1.30  23 Aug, 2007
+        - add support for realpath option to ls method
+        - add support for realpath and names_only to glob method
+        - improve _set_status and _set_error methods
+        - add support for password authentication and for keys with
+          passphrases
 
 1.29  14 Aug, 2007
         - add support for names_only option to ls and find methods

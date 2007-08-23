@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign::Constants;
 
-our $VERSION = '0.90_11';
+our $VERSION = '1.30';
 
 use strict;
 use warnings;
@@ -104,7 +104,7 @@ BEGIN {
 		      SFTP_ERR_LOCAL_BAD_PATH => 40,
 		      SFTP_ERR_LOCAL_BAD_OBJECT => 41,
 		      SFTP_ERR_REMOTE_ALREADY_EXISTS => 42,
-                      SFTP_ERR_BAD_SSH_BINARY => 43,
+                      # SFTP_ERR_BAD_SSH_BINARY => 43,
                       SFTP_ERR_ABORTED => 44
                     );
 

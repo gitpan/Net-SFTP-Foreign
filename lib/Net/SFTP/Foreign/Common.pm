@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign::Common;
 
-our $VERSION = '0.02';
+our $VERSION = '1.30';
 
 use strict;
 use warnings;
@@ -22,9 +22,12 @@ my %status_str = ( SSH2_FX_OK, "OK",
 		   SSH2_FX_OP_UNSUPPORTED, "Operation unsupported" );
 
 sub _set_status {
-    my ($sftp, $code, $str) = @_;
+    my $sftp = shift;
+    my $code = shift;
     if ($code) {
-        if (defined $str) {
+        my $str;
+        if (@_) {
+            $str = join ': ', @_;
             ($str) = $str =~ /(.*)/
                 if (${^TAINT} && tainted $str);
         }
@@ -41,9 +44,12 @@ sub _set_status {
 sub status { shift->{_status} }
 
 sub _set_error {
-    my ($sftp, $code, $str) = @_;
+    my $sftp = shift;
+    my $code = shift;
     if ($code) {
-        if (defined $str) {
+        my $str;
+        if (@_) {
+            $str = join ': ', @_;
             ($str) = $str =~ /(.*)/
                 if (${^TAINT} && tainted $str);
         }
@@ -71,7 +77,7 @@ sub _set_errno {
 	if ($status == SSH2_FX_EOF) {
 	    return;
 	}
-	elsif ($status == SSH2_FX_NO_SUCH_FILE) {
+        elsif ($status == SSH2_FX_NO_SUCH_FILE) {
 	    $! = Errno::ENOENT();
 	}
 	elsif ($status == SSH2_FX_PERMISSION_DENIED) {
@@ -128,7 +134,7 @@ sub find {
     my $wantarray = wantarray;
     my (@res, $res);
     my %done;
-    my %rpdone;
+    my %rpdone; # used to detect cycles
 
     my @dirs = _ensure_list $dirs;
     my @queue = map { { filename => $_ } } ($ordered ? sort @dirs : @dirs);
@@ -144,16 +150,18 @@ sub find {
 
 	    if ($follow or $realpath) {
 		unless (defined $entry->{realpath}) {
-		    my $rp = $entry->{realpath} = $self->realpath($fn)
-			or next;
-		    $rpdone{$rp}++ and next;
+                    my $rp = $self->{realpath} = $self->realpath($fn);
+                    next unless (defined $rp and not $rpdone{$rp}++);
 		}
 	    }
 		
 	    if ($follow) {
-		$entry->{a} = $self->stat($fn)
-		    or next;
-		unshift @queue, $entry;
+                my $a = $self->stat($fn);
+                if (defined $a) {
+                    $entry->{a} = $a;
+                    # we queue it for reprocessing as it could be a directory
+                    unshift @queue, $entry;
+                }
 		next;
 	    }
 		

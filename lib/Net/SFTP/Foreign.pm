@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.29';
+our $VERSION = '1.30';
 
 use strict;
 use warnings;
@@ -177,16 +177,22 @@ sub _do_io_win {
 *_do_io = $windows ? \&_do_io_win : \&_do_io_unix;
 
 sub _conn_lost {
-    my ($sftp, $status, $err, $str) = @_;
+    my ($sftp, $status, $err, @str) = @_;
 
     $sftp->{_status} or
 	$sftp->_set_status(defined $status ? $status : SSH2_FX_CONNECTION_LOST);
 
     $sftp->{_error} or
 	$sftp->_set_error((defined $err ? $err : SFTP_ERR_CONNECTION_BROKEN),
-			  (defined $str ? $str : "Connection to remote server is broken"));
+			  (@str ? @str : "Connection to remote server is broken"));
 
     undef $sftp->{_connected};
+}
+
+sub _conn_failed {
+    shift->_conn_lost(SSH2_FX_NO_CONNECTION,
+                      SFTP_ERR_CONNECTION_BROKEN,
+                      @_)
 }
 
 sub _get_msg {
@@ -237,8 +243,19 @@ sub new {
     $sftp->{_timeout} = delete $opts{timeout};
     $sftp->{_autoflush} = delete $opts{autoflush};
 
+    my ($pass, $passphrase);
+
     my @open2_cmd;
     unless (defined $transport) {
+
+        $pass = delete $opts{passphrase};
+
+        if (defined $pass) {
+            $passphrase = 1;
+        }
+        else {
+            $pass = delete $opts{password};
+        }
 
         my $open2_cmd = delete $opts{open2_cmd};
         if (defined $open2_cmd) {
@@ -270,31 +287,82 @@ sub new {
     }
 
     croak "invalid option(s) '".CORE::join("', '", keys %opts)."' or bad combination"
-	if %opts;
+                                           if %opts;
 
     if (defined $transport) {
-        @{$sftp}{qw(ssh_in ssh_out pid)} = ( ref $transport eq 'ARRAY'
-                                             ? @$transport
-                                             : ($transport, $transport));
+        if (ref $transport eq 'ARRAY') {
+            @{$sftp}{qw(ssh_in ssh_out pid)} = @$transport;
+        }
+        else {
+            $sftp->{ssh_in} = $sftp->{ssh_out} = $transport;
+            $sftp->{_ssh_out_is_not_dupped} = 1;
+        }
     }
     else {
         if (${^TAINT} and Scalar::Util::tainted($ENV{PATH})) {
             _tcroak('Insecure $ENV{PATH}')
         }
 
+        my $pid = $$;
         local $@;
         local $SIG{__DIE__};
 
-        my $pid = $$;
-        $sftp->{pid} = eval { open2($sftp->{ssh_in}, $sftp->{ssh_out}, @open2_cmd) };
-        if ($pid != $$) { # that's to workaround a bug in IPC::Open3:
-            require POSIX;
-            POSIX::_exit(-1);
+        if (defined $pass) {
+
+            # user has requested to use a password or a passphrase for authentication
+            # we use Expect to handle that
+
+            eval { require Expect };
+            $@ and croak "password authentication is not available, Expect is not installed";
+
+            local $ENV{SSH_ASKPASS} if $passphrase;
+            local $ENV{SSH_AUTH_SOCK} if $passphrase;
+
+            my $name = $passphrase ? 'Passphrase' : 'Password';
+            my $eto = $sftp->{_timeout} ? $sftp->{_timeout} * 4 : 120;
+
+            my $conn = $sftp->{ssh_in} = $sftp->{ssh_out} = Expect->new;
+            $sftp->{_ssh_out_is_not_dupped} = 1;
+
+            $conn->raw_pty(1);
+            $conn->log_user(0);
+
+            my $ok = $conn->spawn(@open2_cmd);
+
+            if ($$ != $pid) {
+                require POSIX;
+                POSIX::_exit(-1);
+            }
+
+            unless ($ok) {
+                $sftp->_conn_failed("Spawning the SSH process failed", $conn->error);
+                return $sftp;
+            }
+
+            $ok = $conn->expect($eto, ":");
+            unless ($ok) {
+                $sftp->_conn_failed("$name not requested as expected", $conn->error);
+                return $sftp;
+            }
+
+            $conn->send("$pass\n");
+            $ok = $conn->expect($eto, "\n");
+            unless ($ok) {
+                $sftp->_conn_failed("$name interchange did not complete", $conn->error);
+                return $sftp;
+            }
         }
-        unless (defined $sftp->{pid}) {
-            $sftp->_set_status(SSH2_FX_NO_CONNECTION);
-            $sftp->_set_error(SFTP_ERR_BAD_SSH_BINARY, "Bad ssh command: $!");
-            return $sftp;
+        else {
+
+            $sftp->{pid} = eval { open2($sftp->{ssh_in}, $sftp->{ssh_out}, @open2_cmd) };
+            if ($pid != $$) { # that's to workaround a bug in IPC::Open3:
+                require POSIX;
+                POSIX::_exit(-1);
+            }
+            unless (defined $sftp->{pid}) {
+                $sftp->_conn_failed("Bad ssh command", $!);
+                return $sftp;
+            }
         }
         unless ($windows) {
             for my $dir (qw(ssh_in ssh_out)) {
@@ -314,8 +382,8 @@ sub DESTROY {
     if (defined $pid) {
         local $?;
         local $!;
-        close $sftp->{ssh_out} if defined $sftp->{ssh_out};
-        close $sftp->{ssh_in} if (defined $sftp->{ssh_in} and !$windows);
+        close $sftp->{ssh_out} if (defined $sftp->{ssh_out} and not $sftp->{_ssh_out_is_not_dupped});
+        close $sftp->{ssh_in} if defined $sftp->{ssh_in};
         if ($windows) {
             kill 1, $pid
                 and waitpid($pid, 0);
@@ -392,19 +460,19 @@ sub _get_msg_and_check {
 	if ($id != $eid) {
 	    $sftp->_conn_lost(SSH2_FX_BAD_MESSAGE,
 			      SFTP_ERR_REMOTE_BAD_MESSAGE,
-			      "$errstr: bad packet sequence, expected $eid, got $id");
+			      $errstr, "bad packet sequence, expected $eid, got $id");
 	    return undef;
 	}
 
 	if ($type != $etype) {
 	    if ($type == SSH2_FXP_STATUS) {
 		my $status = $sftp->_set_status($msg->get_int32);
-		$sftp->_set_error($err, "$errstr: $status");
+		$sftp->_set_error($err, $errstr, $status);
 	    }
 	    else {
 		$sftp->_conn_lost(SSH2_FX_BAD_MESSAGE,
 				  SFTP_ERR_REMOTE_BAD_MESSAGE,
-				  "$errstr: bad packet type, expected $etype packet, got $type");	
+				  $errstr, "bad packet type, expected $etype packet, got $type");	
 	    }
 	    return undef;
 	}
@@ -477,7 +545,7 @@ sub _check_status_ok {
 	my $status = $sftp->_set_status($msg->get_int32);
 	return 1 if $status == SSH2_FX_OK;
 
-	$sftp->_set_error($error, "$errstr: $status");
+	$sftp->_set_error($error, $errstr, $status);
     }
     return undef;
 }
@@ -1288,7 +1356,7 @@ sub get {
         unless (CORE::open $fh, ">", $local) {
             umask $oldumask;
             $sftp->_set_error(SFTP_ERR_LOCAL_OPEN_FAILED,
-                              "Can't open $local: $!");
+                              "Can't open $local", $!);
             return undef;
         }
         umask $oldumask;
@@ -1304,7 +1372,7 @@ sub get {
 
         unless (chmod $perm & $numask, $local) {
             $sftp->_set_error(SFTP_ERR_LOCAL_CHMOD_FAILED,
-                              "Can't chmod $local: $!");
+                              "Can't chmod $local", $!);
             return undef
         }
     }
@@ -1372,7 +1440,7 @@ sub get {
         unless ($dont_save) {
             unless (print $fh $data) {
                 $sftp->_set_error(SFTP_ERR_LOCAL_WRITE_FAILED,
-                                  "unable to write data to local file $local: $!");
+                                  "unable to write data to local file $local", $!);
                 last;
             }
         }
@@ -1385,7 +1453,7 @@ sub get {
     unless ($dont_save) {
         unless (CORE::close $fh) {
             $sftp->_set_error(SFTP_ERR_LOCAL_WRITE_FAILED,
-                              "unable to write data to local file $local: $!");
+                              "unable to write data to local file $local", $!);
             return undef;
         }
 
@@ -1401,7 +1469,7 @@ sub get {
 
                 unless (utime $atime, $mtime, $local) {
                     $sftp->_set_error(SFTP_ERR_LOCAL_UTIME_FAILED,
-                                      "Can't utime $local: $!");
+                                      "Can't utime $local", $!);
                     return undef;
                 }
             }
@@ -1470,7 +1538,7 @@ sub put {
     my $fh;
     unless (CORE::open $fh, '<', $local) {
 	$sftp->_set_error(SFTP_ERR_LOCAL_OPEN_FAILED,
-			 "Unable to open local file '$local': $!");
+			 "Unable to open local file '$local'", $!);
 	return undef;
     }
 
@@ -1478,7 +1546,7 @@ sub put {
     unless ((undef, undef, $lmode, undef, undef,
 	     undef, undef, $lsize, $latime, $lmtime) = CORE::stat $fh) {
 	$sftp->_set_error(SFTP_ERR_LOCAL_STAT_FAILED,
-			 "Couldn't stat local file '$local': $!");
+			 "Couldn't stat local file '$local'", $!);
 	return undef;
     }
 
@@ -1512,7 +1580,7 @@ sub put {
 		my $len = CORE::read $fh, my ($data), $block_size;
 		unless (defined $len) {
 		    $sftp->_set_error(SFTP_ERR_LOCAL_READ_ERROR,
-				     "Couldn't read from local file '$local': $!");
+				     "Couldn't read from local file '$local'", $!);
 		    last OK;
 		}
 		
@@ -1586,6 +1654,7 @@ sub ls {
     my $follow_links = delete $opts{follow_links};
     my $atomic_readdir = delete $opts{atomic_readdir};
     my $names_only = delete $opts{names_only};
+    my $realpath = delete $opts{realpath};
     my $wanted = delete $opts{_wanted} ||
 	_gen_wanted(delete $opts{wanted},
 		    delete $opts{no_wanted});
@@ -1612,13 +1681,17 @@ sub ls {
 	    my $count = $msg->get_int32 or last;
 
 	    for (1..$count) {
-		my $entry =  { filename => $msg->get_str,
-			       longname => $msg->get_str,
-			       a => $msg->get_attributes };
+                my $fn = $msg->get_str;
+                my $ln = $msg->get_str;
+                my $a = $msg->get_attributes;
 
-		if ($follow_links and S_ISLNK($entry->{a}->perm)) {
-		    my $fn = $entry->{filename};
-		    if (my $a = $sftp->stat($sftp->join($dir, $fn))) {
+		my $entry =  { filename => $fn,
+			       longname => $ln,
+			       a => $a };
+
+		if ($follow_links and S_ISLNK($a->perm)) {
+
+		    if ($a = $sftp->stat($sftp->join($dir, $fn))) {
 			$entry->{a} = $a;
 		    }
 		    else {
@@ -1627,8 +1700,20 @@ sub ls {
 		    }
 		}
 
+
+                if ($realpath) {
+                    my $rp = $sftp->realpath($fn);
+                    if (defined $rp) {
+                        $fn = $entry->{realpath} = $rp;
+                    }
+                    else {
+			$sftp->_set_error;
+			$sftp->_set_status;
+                    }
+                }
+
 		if ($atomic_readdir or !$wanted or $wanted->($sftp, $entry)) {
-		    push @dir, ($names_only ? $entry->{filename} : $entry);
+		    push @dir, ($names_only ? $fn : $entry);
 		}
             }
 	}
@@ -1690,6 +1775,8 @@ sub glob {
     my $on_error = delete $opts{on_error};
     my $follow_links = delete $opts{follow_links};
     my $ignore_case = delete $opts{ignore_case};
+    my $names_only = delete $opts{names_only};
+    my $realpath = delete $opts{realpath};
     my $ordered = delete $opts{ordered};
     my $wanted = _gen_wanted( delete $opts{wanted},
 			      delete $opts{no_wanted});
@@ -1735,7 +1822,18 @@ sub glob {
 				   push @res, $e if S_ISDIR($e->{a}->perm)
 			       }
 			       elsif (!$wanted or $wanted->($sftp, $e)) {
-				   push @res, $e if $wantarray;
+                                   if ($wantarray) {
+                                       if ($realpath) {
+                                           $e->{realpath} = $sftp->realpath($e->{filename});
+                                           unless (defined $e->{realpath}) {
+                                               $sftp->_call_on_error($on_error, $e);
+                                               return undef;
+                                           }
+                                       }
+                                       push @res, ($names_only
+                                                   ? ($realpath ? $e->{realpath} : $e->{filename} )
+                                                   : $e);
+                                   }
 				   $res++;
 			       }
 			   }
@@ -1858,7 +1956,7 @@ sub rget {
 				 }
 				 else {
 				     $sftp->_set_error(SFTP_ERR_LOCAL_MKDIR_FAILED,
-						       "mkdir '$lpath' failed: $!");
+						       "mkdir '$lpath' failed", $!);
 				 }
 			     }
 			 }
@@ -1890,7 +1988,7 @@ sub rget {
                                              }
                                          }
 					 $sftp->_set_error(SFTP_ERR_LOCAL_SYMLINK_FAILED,
-							   "creation of symlink '$lpath' failed: $!");
+							   "creation of symlink '$lpath' failed", $!);
 				     }
 				 }
 				 elsif (S_ISREG($e->{a}->perm)) {
@@ -2757,6 +2855,11 @@ This flag ensures that no callback call (C<wanted>, C<no_wanted>) is
 performed in the middle of reading a directory and has to be set if
 any of the callbacks can modify the file system.
 
+=item realpath =E<gt> 1
+
+for every file object, performs a realpath operation and populates de
+C<realpath> entry.
+
 =item names_only =E<gt> 1
 
 makes the method return a simple array containing the file names from
@@ -2913,6 +3016,10 @@ a false value changes the behaviour.
 =item follow_links =E<gt> 1
 
 =item ordered =E<gt> 1
+
+=item names_only =E<gt> 1
+
+=item realpath =E<gt> 1
 
 =item on_error =E<gt> sub { ... }
 

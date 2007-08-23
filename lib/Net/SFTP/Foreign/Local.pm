@@ -33,7 +33,7 @@ sub stat {
     $! = 0;
     my $a = Net::SFTP::Foreign::Attributes->new_from_stat(CORE::stat($_[1]));
     unless ($a) {
-	$_[0]->_set_error(SFTP_ERR_LOCAL_STAT_FAILED, "Couldn't stat local file '$_[1]': $!");
+	$_[0]->_set_error(SFTP_ERR_LOCAL_STAT_FAILED, "Couldn't stat local file '$_[1]'", $!);
     }
     $a
 }
@@ -42,7 +42,7 @@ sub lstat {
     $! = 0;
     my $a = Net::SFTP::Foreign::Attributes->new_from_stat(CORE::lstat($_[1]));
     unless ($a) {
-	$_[0]->_set_error(SFTP_ERR_LOCAL_STAT_FAILED, "Couldn't stat local file '$_[1]': $!");
+	$_[0]->_set_error(SFTP_ERR_LOCAL_STAT_FAILED, "Couldn't stat local file '$_[1]'", $!);
     }
     $a
 }
@@ -51,7 +51,7 @@ sub readlink {
     $! = 0;
     my $target = readlink $_[1];
     unless (defined $target) {
-	$_[0]->_set_error(SFTP_ERR_LOCAL_READLINK_FAILED, "Couldn't read link '$_[1]': $!");
+	$_[0]->_set_error(SFTP_ERR_LOCAL_READLINK_FAILED, "Couldn't read link '$_[1]'", $!);
     }
     $target
 }
