@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign::Buffer;
 
-our $VERSION = '1.28';
+our $VERSION = '1.31';
 
 use strict;
 use warnings;
@@ -29,40 +29,46 @@ sub make { bless \$_[1], $_[0] }
 sub bytes { ${$_[0]} }
 
 sub get_int8 {
-    length ${$_[0]} >=1 or croak "buffer too small";
+    length ${$_[0]} >=1 or return undef;
     unpack(C => substr(${$_[0]}, 0, 1, ''));
 }
 
 sub get_int32 {
-    length ${$_[0]} >=4 or croak "buffer too small";
+    length ${$_[0]} >=4 or return undef;
     unpack(N => substr(${$_[0]}, 0, 4, ''));
 }
 
 sub get_int64 {
-    length ${$_[0]} >=8 or croak "buffer too small";
+    my $self = shift;
+    length $$self >=8 or return undef;
     if (HAS_QUADS) {
-	return unpack(Q => substr(${$_[0]}, 0, 8, ''))
+	return unpack(Q => substr($$self, 0, 8, ''))
     }
     else {
-	my ($int, $zero);
-	($zero, $int) = unpack(NN => substr(${$_[0]}, 0, 8, ''));
-	if ($zero) {
+	my ($big, $small) = unpack(NN => substr($$self, 0, 8, ''));
+	if ($big) {
 	    # too big for an integer, try to handle it as a float:
-	    my $high = $zero * 4294967296;
-	    my $result = $high + $int;
-	    return $result if ($result - $high == $int);
-	    croak "unsupported 64bit value in buffer";
+	    my $high = $big * 4294967296;
+	    my $result = $high + $small;
+            unless ($result - $high == $small) {
+                # too big event for a float, use a BigInt;
+                require Math::BigInt;
+                $result = Math::BigInt->new($big);
+                $result <<= 32;
+                $result += $small;
+            }
+	    return $result;
 	}
-	return $int;
+	return $small;
     }
-
 }
 
 sub get_str {
-    length ${$_[0]} >=4 or croak "buffer too small";
-    my $len = unpack(N => substr(${$_[0]}, 0, 4, ''));
-    length ${$_[0]} >=$len or croak "buffer too small";
-    substr(${$_[0]}, 0, $len, '');
+    my $self = shift;
+    length $$self >=4 or return undef;
+    my $len = unpack(N => substr($$self, 0, 4, ''));
+    length $$self >=$len or return undef;
+    substr($$self, 0, $len, '');
 }
 
 

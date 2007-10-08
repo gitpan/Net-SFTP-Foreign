@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.30';
+our $VERSION = '1.31';
 
 use strict;
 use warnings;
@@ -19,17 +19,23 @@ my $windows;
 BEGIN {
     $windows = $^O =~ /Win/;
 
-    if ($windows) {
-	require Win32::Socketpair;
-	Win32::Socketpair->import(qw(winopen2));
-    }
-
     if ($^O =~ /solaris/i) {
 	$dirty_cleanup = 1 unless defined $dirty_cleanup;
     }
 }
 
 sub _debug { print STDERR '# ', @_,"\n" }
+
+sub _hexdump {
+    my $data = shift;
+    while ($data =~ /(.{1,32})/smg) {
+        my $line=$1;
+        my @c= (( map { sprintf "%02x",$_ } unpack('C*', $line)),
+                (("  ") x 32))[0..31];
+        $line=~s/(.)/ my $c=$1; unpack("c",$c)>=32 ? $c : '.' /egms;
+        print STDERR join(" ", @c, '|', $line), "\n";
+    }
+}
 
 use Net::SFTP::Foreign::Constants qw( :fxp :flags :att
 				      :status :error
@@ -67,6 +73,8 @@ sub _queue_msg {
 	$sftp->{_queued}++;
 	_debug(sprintf("queueing msg len: %i, code:%i, id:%i ... [$sftp->{_queued}]",
 		       $len, unpack(CN => $bytes)));
+
+        ($debug & 16) and _hexdump(pack('N', length($bytes)) . $bytes);
     }
 
     $sftp->{_bout} .= pack('N', length($bytes));
@@ -211,8 +219,11 @@ sub _get_msg {
 
     if ($debug) {
 	$sftp->{_queued}--;
-	$debug and _debug(sprintf("got it!, len:%i, code:%i, id:%i",
-				  $len, unpack( CN => $$msg)));
+        my ($code, $id, $status) = unpack( CNN => $$msg);
+        $status = '-' unless $code == SSH2_FXP_STATUS;
+	_debug(sprintf("got it!, len:%i, code:%i, id:%i, status: %s",
+                       $len, $code, $id, $status));
+        ($debug & 8) and _hexdump($$msg);
     }
 
     return $msg;
@@ -353,6 +364,7 @@ sub new {
             }
         }
         else {
+            warn "ssh cmd: @open2_cmd\n" if $debug;
 
             $sftp->{pid} = eval { open2($sftp->{ssh_in}, $sftp->{ssh_out}, @open2_cmd) };
             if ($pid != $$) { # that's to workaround a bug in IPC::Open3:
@@ -427,6 +439,13 @@ sub _init {
 	    ## XXX Check for extensions.
 
 	    $sftp->{server_version} = $version;
+            $sftp->{server_extensions} = {};
+            while (length $$msg) {
+                my $key = $msg->get_str;
+                my $value = $msg->get_str;
+                $sftp->{server_extensions}{$key} = $value;
+            }
+
 	    return $version;
 	}
 
@@ -466,7 +485,7 @@ sub _get_msg_and_check {
 
 	if ($type != $etype) {
 	    if ($type == SSH2_FXP_STATUS) {
-		my $status = $sftp->_set_status($msg->get_int32);
+		my $status = $sftp->_set_status($msg->get_int32, $msg->get_str);
 		$sftp->_set_error($err, $errstr, $status);
 	    }
 	    else {
@@ -542,7 +561,7 @@ sub _check_status_ok {
     if (my $msg = $sftp->_get_msg_and_check(SSH2_FXP_STATUS, $eid,
 					    $error, $errstr)) {
 	
-	my $status = $sftp->_set_status($msg->get_int32);
+	my $status = $sftp->_set_status($msg->get_int32, $msg->get_str);
 	return 1 if $status == SSH2_FX_OK;
 
 	$sftp->_set_error($error, $errstr, $status);

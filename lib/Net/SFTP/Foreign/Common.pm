@@ -31,7 +31,7 @@ sub _set_status {
             ($str) = $str =~ /(.*)/
                 if (${^TAINT} && tainted $str);
         }
-        else {
+        unless (defined $str and length $str) {
             $str = $status_str{$code} || "Unknown status ($code)";
         }
 	return $sftp->{_status} = dualvar($code, $str);

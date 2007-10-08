@@ -1,5 +1,10 @@
 Revision history for Net::SFTP::Foreign
 
+1.31  8 Oct, 2007
+        - remove Win32::Socketpair loading, it is not used anymore
+        - improve debugging
+        - do not croak when invalid data from the other side appears
+
 1.30  23 Aug, 2007
         - add support for realpath option to ls method
         - add support for realpath and names_only to glob method
