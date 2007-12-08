@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.31';
+our $VERSION = '1.32';
 
 use strict;
 use warnings;
@@ -2597,7 +2597,7 @@ the remote file. Setting this flag makes the write operations inmediate.
 =item timeout =E<gt> $seconds
 
 when this parameter is set, the connection is dropped if no data
-arrives on the ssh socket for the given time while waiting for some
+arrives on the SSH socket for the given time while waiting for some
 command to complete.
 
 When the timeout expires, the current method is aborted and
@@ -3376,6 +3376,14 @@ it. User C<realpath> to normalize it:
 
 =over 4
 
+=item Closing the connection:
+
+B<Q>: How do I close the connection to the remote server?
+
+B<A>: let the C<$sftp> object go out of scope or just undefine it:
+
+  undef $sftp;
+
 =item Using Net::SFTP::Foreign from a cron script:
 
 B<Q>: I wrote a script for performing sftp file transfers that works
@@ -3388,7 +3396,7 @@ script from cron it fails with a broken pipe error:
 B<A>: C<ssh> is not on your cron PATH.
 
 The remedy is either to add the location of the C<ssh> application to
-your cron PATH or to use the C<ssh_cmd> option on the C<new> method to
+your cron PATH or to use the C<ssh_cmd> option of the C<new> method to
 hardcode the location of C<ssh> inside your script, for instance:
 
   my $ssh = Net::SFTP::Foreign->new($host,
@@ -3400,11 +3408,19 @@ B<Q>: I noticed that the examples/synopsis that is provided has no
 mention of using a password to login. How is one, able to login to a
 SFTP server that requires uid/passwd for login?
 
-B<A>: You can't! ...
+B<A>: You can't!... well, actually, you can!
 
-Well, actually you can, using the C<transport> option on the
-constructor and L<Expect> to handle the password authentication part
-on your script:
+Use the C<password> option when calling the constructor:
+
+  my $sftp = Net::SFTP::Foreign->new('foo@host', password => $password);
+
+It will use L<Expect> to log into the remote machine after the SSH
+connection is stablished, though as the prompt used by SSH to ask for
+the password can be customized, it is not gauranteed to work.
+
+You can also handle the connection and login yourself with L<Expect>
+or any other way, and then call the constructor with the C<transport>
+option:
 
   use Expect;
 
@@ -3424,8 +3440,8 @@ on your script:
   die "unable to stablish SSH connection: ". $sftp->error
       if $sftp->error;
 
-The full example is available from the C<samples> directory in this
-package.
+(full example code is available from the C<samples> directory in this
+package)
 
 Anyway, I highly discourage this practice. You better use public-key
 authentication instead!
@@ -3434,9 +3450,10 @@ authentication instead!
 
 B<Q>: How can I use keys protected by a passphrase?
 
-B<A>: You can't ... well, ok, see answer to previous question.
+B<A>: You can't ... well, ok, see answer to previous question. The
+constructor also supports a C<passphrase> option.
 
-=item Constructor C<more> argument expects an array reference:
+=item C<more> constructor option expects an array reference:
 
 B<Q>: I'm trying to pass in the private key file using the -i option,
 but it keep saying it couldn't find the key. What I'm doing wrong?

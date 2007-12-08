@@ -1,5 +1,11 @@
 Revision history for Net::SFTP::Foreign
 
+1.32  8 Dec, 2007
+        - add new question to FAQ
+        - document password and passphrase options (though, not
+          completely).
+        - somo minor documentation changes
+
 1.31  8 Oct, 2007
         - remove Win32::Socketpair loading, it is not used anymore
         - improve debugging
