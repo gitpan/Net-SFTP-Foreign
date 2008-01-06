@@ -5,7 +5,7 @@ use warnings;
 
 use Test::More;
 
-# use Scalar::Quote qw(D Q);
+#$Net::SFTP::Foreign::debug = 2;
 
 use File::Spec;
 use Cwd qw(getcwd);
@@ -57,9 +57,11 @@ BEGIN {
 	
 	for ( File::Spec->catfile($vol, $dir, $ssname),
 	      File::Spec->catfile($up, 'lib', $ssname),
+	      File::Spec->catfile($up, 'libexec', $ssname),
 	      File::Spec->catfile($up, 'sbin', $ssname),
 	      File::Spec->catfile($up, 'lib', 'openssh', $ssname),
 	      File::Spec->catfile($up, 'usr', 'lib', $ssname),
+	      File::Spec->catfile($up, 'usr', 'libexec', $ssname),
 	      File::Spec->catfile($up, 'usr', 'sbin', $ssname) ) {
 
 	    if (-x $_) {
@@ -176,14 +178,15 @@ for my $setcwd (0, 1) {
         ok (!$sftp->put($dlfn, $drfn, overwrite => 0), "no overwrite - $i");
         is (int $sftp->error, Net::SFTP::Foreign::Constants::SFTP_ERR_REMOTE_OPEN_FAILED(), "no overwrite - error - $i");
 
+        my $ok = 1;
         ok ($sftp->get($drfn, $dlfn1), "get - $i");
         diag ($sftp->error) if $sftp->error;
-
         ok(!filediff($drfn_l, $dlfn1), "get - file content - $i");
 
-        unlink $dlfn;
         unlink $dlfn1;
         unlink $drfn_l;
+        unlink $dlfn;
+
     }
 
     # mkdir and rmdir
@@ -238,7 +241,7 @@ for my $setcwd (0, 1) {
     ok($fh, "open read file");
 
     my @read = <$fh>;
-    our ($a, $b);
+    # our ($a, $b);
     # D("@read", "@all") and diag "got: $a\nexp: $b\n\n";
 
     is("@read", "@all", "readline list context");
@@ -383,14 +386,12 @@ for my $setcwd (0, 1) {
     my @a = glob "$lcwd/*";
     is ($sftp->glob("$rcwd/*"), scalar @a, "glob");
 
-    unlink $drfn;
+    unlink $drfn_l;
 
     alarm 0;
     ok (1, "end");
 
 }
-
-
 
 __DATA__
 

@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.32';
+our $VERSION = '1.33';
 
 use strict;
 use warnings;
@@ -27,6 +27,7 @@ BEGIN {
 sub _debug { print STDERR '# ', @_,"\n" }
 
 sub _hexdump {
+    no warnings qw(uninitialized);
     my $data = shift;
     while ($data =~ /(.{1,32})/smg) {
         my $line=$1;
@@ -69,7 +70,7 @@ sub _queue_msg {
     my $bytes = $buf->bytes;
     my $len = length $bytes;
 
-    if ($debug) {
+    if ($debug and $debug & 1) {
 	$sftp->{_queued}++;
 	_debug(sprintf("queueing msg len: %i, code:%i, id:%i ... [$sftp->{_queued}]",
 		       $len, unpack(CN => $bytes)));
@@ -206,7 +207,7 @@ sub _conn_failed {
 sub _get_msg {
     my $sftp = shift;
 
-    $debug and _debug("waiting for message... [$sftp->{_queued}]");
+    $debug and $debug & 1 and _debug("waiting for message... [$sftp->{_queued}]");
 
     unless ($sftp->_do_io($sftp->{_timeout})) {
 	$sftp->_conn_lost(undef, undef, "Connection to remote server stalled");
@@ -217,7 +218,7 @@ sub _get_msg {
     my $len = unpack N => substr($$bin, 0, 4, '');
     my $msg = Net::SFTP::Foreign::Buffer->make(substr($$bin, 0, $len, ''));
 
-    if ($debug) {
+    if ($debug and $debug & 1) {
 	$sftp->{_queued}--;
         my ($code, $id, $status) = unpack( CNN => $$msg);
         $status = '-' unless $code == SSH2_FXP_STATUS;
@@ -364,7 +365,7 @@ sub new {
             }
         }
         else {
-            warn "ssh cmd: @open2_cmd\n" if $debug;
+            warn "ssh cmd: @open2_cmd\n" if ($debug and $debug & 1);
 
             $sftp->{pid} = eval { open2($sftp->{ssh_in}, $sftp->{ssh_out}, @open2_cmd) };
             if ($pid != $$) { # that's to workaround a bug in IPC::Open3:
@@ -391,6 +392,9 @@ sub new {
 sub DESTROY {
     my $sftp = shift;
     my $pid = $sftp->{pid};
+
+    $debug and $debug & 4 and Net::SFTP::Foreign::_debug("$sftp->DESTROY called (ssh pid: ".($pid||'').")");
+
     if (defined $pid) {
         local $?;
         local $!;
@@ -610,6 +614,12 @@ sub open {
     my $rid = $sftp->_get_handle($id,
 				SFTP_ERR_REMOTE_OPEN_FAILED,
 				"Couldn't open remote file '$path'");
+
+    if ($debug and $debug & 2) {
+        _debug("new remote file '$path' open, rid:");
+        _hexdump($rid);
+    }
+
     defined $rid
 	or return undef;
 
@@ -633,6 +643,12 @@ sub opendir {
 
     my $rid = $sftp->_get_handle($id, SFTP_ERR_REMOTE_OPENDIR_FAILED,
 				 "Couldn't open remote dir '$path'");
+
+    if ($debug and $debug & 2) {
+        _debug("new remote dir '$path' open, rid:");
+        _hexdump($rid);
+    }
+
     defined $rid
 	or return undef;
 
@@ -1116,9 +1132,16 @@ sub _close {
     my $id = $sftp->_queue_rid_request(SSH2_FXP_CLOSE, @_);
     defined $id or return undef;
 
-    return $sftp->_check_status_ok($id,
-                                   SFTP_ERR_REMOTE_CLOSE_FAILED,
-                                   "Couldn't close remote file");
+    my $ok = $sftp->_check_status_ok($id,
+                                     SFTP_ERR_REMOTE_CLOSE_FAILED,
+                                     "Couldn't close remote file");
+
+    if ($debug and $debug & 2) {
+        _debug("closing file handle, return: $ok, rid:");
+        _hexdump($sftp->_rid($_[0]));
+    }
+
+    return $ok;
 }
 
 sub close {
@@ -1876,7 +1899,7 @@ sub rremove {
 
     %opts and croak "invalid option(s) '".CORE::join("', '", keys %opts)."'";
 
-    my $count;
+    my $count = 0;
 
     my @dirs;
     $sftp->find( $dirs,
@@ -1905,7 +1928,7 @@ sub rremove {
     while (@dirs) {
 	my $e = pop @dirs;
 	if (!$wanted or $wanted->($sftp, $e)) {
-	    if ($sftp->remove($e->{filename})) {
+	    if ($sftp->rmdir($e->{filename})) {
 		$count++;
 	    }
 	    else {
@@ -2407,6 +2430,9 @@ sub OPEN {
 sub DESTROY {
     my $self = shift;
     my $sftp = $self->_sftp;
+
+    $debug and $debug & 4 and Net::SFTP::Foreign::_debug("$self->DESTROY called (sftp: ".($sftp||'').")");
+
     if ($self->_check and $sftp) {
 	$sftp->_close_save_status($self)
     }
@@ -2445,6 +2471,9 @@ sub OPENDIR {
 sub DESTROY {
     my $self = shift;
     my $sftp = $self->_sftp;
+
+    $debug and $debug & 4 and Net::SFTP::Foreign::_debug("$self->DESTROY called (sftp: ".($sftp||'').")");
+
     if ($self->_check and $sftp) {
 	$sftp->_closedir_save_status($self)
     }
@@ -3472,9 +3501,12 @@ on the array:
 
 =head1 BUGS
 
+Doesn't work on VMS. The problem is related to L<IPC::Open2> not
+working on VMS. Patches are welcome!
+
 On some operative systems, closing the pipes used to comunicate with
 the slave ssh process does not terminate it and a work around has to
-be applied. If you find that your scripts hung when the sftp object
+be applied. If you find that your scripts hung when the $sftp object
 gets out of scope, try setting C<$Net::SFTP::Foreign::dirty_cleanup>
 to a true value and also send me a report including the value of
 C<$^O> on your machine and the OpenSSH version.
@@ -3506,7 +3538,7 @@ L<Net::SSH2>.
 
 =head1 COPYRIGHT
 
-Copyright (c) 2005-2007 Salvador FandiE<ntilde>o (sfandino@yahoo.com).
+Copyright (c) 2005-2008 Salvador FandiE<ntilde>o (sfandino@yahoo.com).
 
 Copyright (c) 2001 Benjamin Trott, Copyright (c) 2003 David Rolsky.
 
