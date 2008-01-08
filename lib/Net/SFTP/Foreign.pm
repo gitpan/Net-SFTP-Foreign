@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.33';
+our $VERSION = '1.34';
 
 use strict;
 use warnings;
@@ -3098,28 +3098,27 @@ created.
 
 =item copy_perms =E<gt> $bool;
 
-if set to a true value, file and directory permissions are copied
-from the remote server (after applying the umask). By default is on.
+if set to a true value, file and directory permissions are copied to
+the remote server (after applying the umask). On by default.
 
 =item copy_time =E<gt> $bool;
 
 if set to a true value, file atime and mtime are copied from the
-remote server. By default is on.
+remote server. By default it is on.
 
 =item overwrite =E<gt> $bool
 
-if set to a true value, when a local file already exists it is
-overwritten. By default is on.
+if set to a true value, when a local file with the same name
+already exists it is overwritten. On by default.
 
 =item newer_only =E<gt> $bool
 
-if set to a true value, when a local file already exists it is
-overwritten only if the remote file is newer.
+if set to a true value, when a local file with the same name
+already exists it is overwritten only if the remote file is newer.
 
 =item ignore_links =E<gt> $bool
 
-if set to a true value, symbolic links on the remote file system are
-skipped.
+if set to a true value, symbolic links are not copied.
 
 =item on_error =E<gt> sub { ... }
 
@@ -3148,7 +3147,66 @@ see docs for C<get> method.
 =item $sftp-E<gt>rput($local, $remote, %opts)
 
 Recursively copies the contents of local directory C<$local> to
-remote directory C<$remote>. I<Not implemented yet>.
+remote directory C<$remote>.
+
+This method tries to recover and continue when some error happens.
+
+Accepted options are:
+
+=over 4
+
+=item umask =E<gt> $umask
+
+use umask C<$umask> to set permissions on the files and directories
+created.
+
+=item copy_perms =E<gt> $bool;
+
+if set to a true value, file and directory permissions are copied
+to the remote server (after applying the umask). On by default.
+
+=item copy_time =E<gt> $bool;
+
+if set to a true value, file atime and mtime are copied to the
+remote server. On by default.
+
+=item overwrite =E<gt> $bool
+
+if set to a true value, when a remote file with the same name already
+exists it is overwritten. On by default.
+
+=item newer_only =E<gt> $bool
+
+if set to a true value, when a remote file with the same name already exists it is
+overwritten only if the local file is newer.
+
+=item ignore_links =E<gt> $bool
+
+if set to a true value, symbolic links are not copied
+
+=item on_error =E<gt> sub { ... }
+
+the passed sub is called when some error happens. It is called with two
+arguments, the C<$sftp> object and the entry causing the error.
+
+=item wanted =E<gt> ...
+
+=item no_wanted =E<gt> ...
+
+This option allows to select which files and directories have to be
+copied. See also C<ls> method docs.
+
+If a directory is discarded all of its contents are also discarded (as
+it is not possible to copy child files without creating the directory
+first!).
+
+=item block_size =E<gt> $block_size
+
+=item queue_size =E<gt> $queue_size
+
+see docs C<put> method docs.
+
+=back
 
 =item $sftp-E<gt>rremove($dir, %opts)
 

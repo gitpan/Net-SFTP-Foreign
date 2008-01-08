@@ -1,5 +1,9 @@
 Revision history for Net::SFTP::Foreign
 
+1.34  8 Jan, 2008
+        - document rput. It said it was not implemented (bug report
+          by Paul Kolano).
+
 1.33  6 Jan, 2008
         - rremove was not removing dirs (bug report by Paul Kolano).
         - require perl >= 5.6

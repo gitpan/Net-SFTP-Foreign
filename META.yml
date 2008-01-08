@@ -1,15 +1,15 @@
 --- #YAML:1.0
 name:                Net-SFTP-Foreign
-version:             1.33
+version:             1.34
 abstract:            Secure File Transfer Protocol client
 license:             ~
-generated_by:        ExtUtils::MakeMaker version 6.32
+author:              
+    - Salvador Fandino <sfandino@yahoo.com>
+generated_by:        ExtUtils::MakeMaker version 6.42
 distribution_type:   module
 requires:     
     Scalar::Util:                  0
     Test::More:                    0
 meta-spec:
-    url:     http://module-build.sourceforge.net/META-spec-v1.2.html
-    version: 1.2
-author:
-    - Salvador Fandino <sfandino@yahoo.com>
+    url:     http://module-build.sourceforge.net/META-spec-v1.3.html
+    version: 1.3
