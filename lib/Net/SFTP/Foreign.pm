@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.34';
+our $VERSION = '1.35';
 
 use strict;
 use warnings;
@@ -1583,6 +1583,8 @@ sub put {
 			 "Unable to open local file '$local'", $!);
 	return undef;
     }
+
+    binmode $fh;
 
     my ($lmode, $lsize, $latime, $lmtime);
     unless ((undef, undef, $lmode, undef, undef,

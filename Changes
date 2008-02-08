@@ -1,5 +1,10 @@
 Revision history for Net::SFTP::Foreign
 
+1.35  8 Feb, 2008
+        - put method was failing for binary files under Windows
+          because binmode was not set on the local filehandler (bug
+          report and patch by Patrick Frazer).
+
 1.34  8 Jan, 2008
         - document rput. It said it was not implemented (bug report
           by Paul Kolano).
