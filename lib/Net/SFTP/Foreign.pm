@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.35';
+our $VERSION = '1.36';
 
 use strict;
 use warnings;
@@ -2558,10 +2558,6 @@ provided by Net::SSH::Perl.
 
 Net::SFTP::Foreign supports version 2 of the SSH protocol only.
 
-Finally B<Net::SFTP::Foreign does not (and will never) allow to use
-passwords for authentication> while Net::SFTP does... though, see the
-FAQ below.
-
 
 =head2 USAGE
 
@@ -2650,6 +2646,13 @@ On some systems, when using a pipe as the transport, closing it, does
 not cause the process at the other side to exit. The additional
 C<$pid> argument can be used to instruct this module to kill that
 process if it doesn't exit by itself.
+
+=item password => $password
+
+=item passphrase => $passphrase
+
+Use L<Expect> to handle password authentication or keys requiring a
+passphrase. This is an experimental feature!
 
 =back
 
@@ -3497,7 +3500,7 @@ B<Q>: I noticed that the examples/synopsis that is provided has no
 mention of using a password to login. How is one, able to login to a
 SFTP server that requires uid/passwd for login?
 
-B<A>: You can't!... well, actually, you can!
+B<A>: You can't!... well, actually, now, you can!
 
 Use the C<password> option when calling the constructor:
 
@@ -3578,7 +3581,9 @@ Support for Windows OSs is still experimental!
 
 Support for taint mode is experimental!
 
-Support for setcwd/cwd is also experimental!
+Support for setcwd/cwd is experimental!
+
+Support for password/passphrase handling via Expect is also experimental!
 
 To report bugs, please, send me and email or use
 L<http://rt.cpan.org>.

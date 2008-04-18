@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign::Compat;
 
-our $VERSION = '0.90_17';
+our $VERSION = '1.36';
 
 use warnings;
 use strict;
@@ -37,6 +37,26 @@ sub import {
     }
 }
 
+BEGIN {
+    my @forbidden = qw( setcwd cwd open opendir sftpread sftpwrite seek
+                        tell eof write flush read getc lstat stat fstat
+                        remove rmdir mkdir setstat fsetstat close closedir
+                        readdir realpath readlink rename symlink abort
+                        get_content join glob rremove rget rput error );
+
+    for my $method (@forbidden) {
+        my $super = "SUPER::$method";
+        no strict 'refs';
+        *{$method} = sub {
+            unless (index((caller)[0], "Net::SFTP::Foreign") == 0) {
+                croak "Method '$method' is not available from " . __PACKAGE__
+                    . ", use the real Net::SFTP::Foreign if you want it!";
+            }
+            shift->$super(@_);
+        };
+    }
+}
+
 sub new {
     my ($class, $host, %opts) = @_;
 
@@ -45,7 +65,7 @@ sub new {
 	$warn = delete($opts{warn}) || sub {};
     }
     else {
-	$warn = sub { warn(join '', @_, "\n") };
+	$warn = sub { warn(CORE::join '', @_, "\n") };
     }
 
     my $sftp = $class->SUPER::new($host, %opts);
@@ -65,7 +85,7 @@ sub _warn {
 
 sub _warn_error {
     my $sftp = shift;
-    if (my $e = $sftp->error) {
+    if (my $e = $sftp->SUPER::error) {
 	$sftp->_warn($e);
     }
 }
@@ -91,7 +111,7 @@ sub get {
 	or return undef;
 
     if ($save) {
-	return join('', @content);
+	return CORE::join('', @content);
     }
 }
 
@@ -101,7 +121,7 @@ sub put {
     $sftp->SUPER::put($local, $remote,
 		      (defined $cb ? (callback => $cb) : ()));
     $sftp->_warn_error;
-    !$sftp->error;
+    !$sftp->SUPER::error;
 }
 
 sub ls {
@@ -122,15 +142,15 @@ sub ls {
     }
 }
 
-sub do_open { shift->open(@_) }
+sub do_open { shift->SUPER::open(@_) }
 
-sub do_opendir { shift->opendir(@_) }
+sub do_opendir { shift->SUPER::opendir(@_) }
 
-sub do_realpath { shift->realpath(@_) }
+sub do_realpath { shift->SUPER::realpath(@_) }
 
 sub do_read {
     my $sftp = shift;
-    my $read = $sftp->sftpread(@_);
+    my $read = $sftp->SUPER::sftpread(@_);
     $sftp->_warn_error;
     if (wantarray) {
 	return ($read, $sftp->status);
@@ -141,7 +161,7 @@ sub do_read {
 }
 
 sub _gen_do_and_status {
-    my $method = shift;
+    my $method = "SUPER::" . shift;
     return sub {
 	my $sftp = shift;
 	$sftp->$method(@_);
@@ -170,7 +190,7 @@ sub _rebless_attrs {
 }
 
 sub _gen_do_stat {
-    my $method = shift;
+    my $method = "SUPER::" . shift;
     return sub {
 	my $sftp = shift;
 	if (my $a = $sftp->$method(@_)) {
@@ -222,7 +242,7 @@ to Net::SFTP::Foreign.
 
 =head1 COPYRIGHT
 
-Copyright (c) 2006 Salvador FandiE<ntilde>o
+Copyright (c) 2006-2008 Salvador FandiE<ntilde>o
 
 All rights reserved.  This program is free software; you can
 redistribute it and/or modify it under the same terms as Perl itself.
