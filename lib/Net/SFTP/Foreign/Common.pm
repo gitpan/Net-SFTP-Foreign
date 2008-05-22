@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign::Common;
 
-our $VERSION = '1.31';
+our $VERSION = '1.37';
 
 use strict;
 use warnings;
@@ -8,7 +8,7 @@ use Carp;
 use Scalar::Util qw(dualvar tainted);
 use Fcntl qw(S_ISLNK S_ISDIR);
 
-use Net::SFTP::Foreign::Helpers qw(_gen_wanted _ensure_list);
+use Net::SFTP::Foreign::Helpers qw(_gen_wanted _ensure_list _debug);
 use Net::SFTP::Foreign::Constants qw(:status);
 
 my %status_str = ( SSH2_FX_OK, "OK",
@@ -20,6 +20,9 @@ my %status_str = ( SSH2_FX_OK, "OK",
 		   SSH2_FX_NO_CONNECTION, "No connection",
 		   SSH2_FX_CONNECTION_LOST, "Connection lost",
 		   SSH2_FX_OP_UNSUPPORTED, "Operation unsupported" );
+
+*debug = \$Net::SFTP::Foreign::debug;
+our $debug;
 
 sub _set_status {
     my $sftp = shift;
@@ -34,6 +37,7 @@ sub _set_status {
         unless (defined $str and length $str) {
             $str = $status_str{$code} || "Unknown status ($code)";
         }
+        $debug and $debug & 64 and _debug("_set_status code: $code, str: $str");
 	return $sftp->{_status} = dualvar($code, $str);
     }
     else {
@@ -56,6 +60,7 @@ sub _set_error {
         else {
 	    $str = $code ? "Unknown error $code" : "OK";
 	}
+        $debug and $debug & 64 and _debug("_set_err code: $code, str: $str");
 	return $sftp->{_error} = dualvar $code, $str;
     }
     else {
@@ -87,10 +92,10 @@ sub _set_errno {
 	    $! = Errno::EBADMSG();
 	}
 	elsif ($status == SSH2_FX_OP_UNSUPPORTED) {
-	    $! = Errnor::ENOTSUP()
+	    $! = Errno::ENOTSUP()
 	}
 	elsif ($status) {
-	    $! = Errnor::EIO()
+	    $! = Errno::EIO()
 	}
     }
 }

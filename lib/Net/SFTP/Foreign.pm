@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.36';
+our $VERSION = '1.37_06';
 
 use strict;
 use warnings;
@@ -17,14 +17,12 @@ our $dirty_cleanup;
 my $windows;
 
 BEGIN {
-    $windows = $^O =~ /Win/;
+    $windows = $^O =~ /Win32/;
 
     if ($^O =~ /solaris/i) {
 	$dirty_cleanup = 1 unless defined $dirty_cleanup;
     }
 }
-
-sub _debug { print STDERR '# ', @_,"\n" }
 
 sub _hexdump {
     no warnings qw(uninitialized);
@@ -100,6 +98,8 @@ sub _sysreadn {
 sub _do_io_unix {
     my ($sftp, $timeout) = @_;
 
+    $debug and $debug & 32 and _debug(sprintf "_do_io connected: %s", $sftp->{_connected} || 0);
+
     return undef unless $sftp->{_connected};
 
     my $fnoout = fileno $sftp->{ssh_out};
@@ -129,10 +129,16 @@ sub _do_io_unix {
         my $rv1 = $rv;
         my $wv1 = length($$bout) ? $wv : '';
 
+        $debug and $debug & 32 and _debug("_do_io select(-,-,-, $timeout)");
+
         my $n = select($rv1, $wv1, undef, $timeout);
         if ($n > 0) {
             if (vec($wv1, $fnoout, 1)) {
                 my $written = syswrite($sftp->{ssh_out}, $$bout, 16384);
+                $debug and $debug & 32 and _debug (sprintf "_do_io write queue: %d, syswrite: %s, max: %d",
+                                                   length $$bout,
+                                                   (defined $written ? $written : 'undef'),
+                                                   16384);
                 unless ($written) {
                     $sftp->_conn_lost;
                     return undef;
@@ -141,6 +147,9 @@ sub _do_io_unix {
             }
             if (vec($rv1, $fnoin, 1)) {
                 my $read = sysread($sftp->{ssh_in}, $sftp->{_bin}, 16384, length($$bin));
+                $debug and $debug & 32 and _debug (sprintf "_do_io read sysread: %s, total read: %d",
+                                                   (defined $read ? $read : 'undef'),
+                                                   length $sftp->{_bin});
                 unless ($read) {
                     $sftp->_conn_lost;
                     return undef;
@@ -148,6 +157,7 @@ sub _do_io_unix {
             }
         }
         else {
+            $debug and $debug & 32 and _debug "_do_io select failed: $!";
             next if ($n < 0 and $! == Errno::EINTR());
             return undef;
         }
@@ -187,6 +197,8 @@ sub _do_io_win {
 
 sub _conn_lost {
     my ($sftp, $status, $err, @str) = @_;
+
+    $debug and $debug & 32 and _debug("_conn_lost");
 
     $sftp->{_status} or
 	$sftp->_set_status(defined $status ? $status : SSH2_FX_CONNECTION_LOST);
@@ -230,6 +242,15 @@ sub _get_msg {
     return $msg;
 }
 
+sub _ipc_open2_bug_workaround {
+    # in some cases, IPC::Open3::open2 returns from the child
+    my $pid = shift;
+    unless ($pid == $$) {
+        require POSIX;
+        POSIX::_exit(-1);
+    }
+}
+
 sub new {
     ${^TAINT} and &_catch_tainted_args;
 
@@ -252,10 +273,11 @@ sub new {
     $sftp->_set_error;
 
     my $transport = delete $opts{transport};
+
     $sftp->{_timeout} = delete $opts{timeout};
     $sftp->{_autoflush} = delete $opts{autoflush};
 
-    my ($pass, $passphrase);
+    my ($pass, $passphrase, $expect_log_user);
 
     my @open2_cmd;
     unless (defined $transport) {
@@ -268,6 +290,8 @@ sub new {
         else {
             $pass = delete $opts{password};
         }
+
+        $expect_log_user = delete $opts{expect_log_user} || 0;
 
         my $open2_cmd = delete $opts{open2_cmd};
         if (defined $open2_cmd) {
@@ -289,7 +313,7 @@ sub new {
             my $more = delete $opts{more};
             if (defined $more) {
                 if (!ref($more) and $more =~ /^-\w\s+\S/) {
-                    carp "'more' argument looks like it needs to be splited first"
+                    carp "'more' argument looks like if it needs to be splited first"
                 }
                 push @open2_cmd, _ensure_list($more)
             }
@@ -315,7 +339,7 @@ sub new {
             _tcroak('Insecure $ENV{PATH}')
         }
 
-        my $pid = $$;
+        my $this_pid = $$;
         local $@;
         local $SIG{__DIE__};
 
@@ -324,6 +348,8 @@ sub new {
             # user has requested to use a password or a passphrase for authentication
             # we use Expect to handle that
 
+            eval { require IO::Pty };
+            $@ and croak "password authentication is not available, IO::Pty and Expect are not installed";
             eval { require Expect };
             $@ and croak "password authentication is not available, Expect is not installed";
 
@@ -333,45 +359,42 @@ sub new {
             my $name = $passphrase ? 'Passphrase' : 'Password';
             my $eto = $sftp->{_timeout} ? $sftp->{_timeout} * 4 : 120;
 
-            my $conn = $sftp->{ssh_in} = $sftp->{ssh_out} = Expect->new;
-            $sftp->{_ssh_out_is_not_dupped} = 1;
+            my $pty = IO::Pty->new;
+            my $expect = Expect->init($pty);
+            $expect->raw_pty(1);
+            $expect->log_user($expect_log_user);
 
-            $conn->raw_pty(1);
-            $conn->log_user(0);
-
-            my $ok = $conn->spawn(@open2_cmd);
-
-            if ($$ != $pid) {
-                require POSIX;
-                POSIX::_exit(-1);
+            my $child = eval { open2($sftp->{ssh_in}, $sftp->{ssh_out}, '-') };
+            if (defined $child and !$child) {
+                $pty->make_slave_controlling_terminal;
+                exec @open2_cmd;
+                exit -1;
             }
+            _ipc_open2_bug_workaround $this_pid;
 
-            unless ($ok) {
-                $sftp->_conn_failed("Spawning the SSH process failed", $conn->error);
+            unless (defined $child) {
+                $sftp->_conn_failed("Bad ssh command", $!);
                 return $sftp;
             }
+            $sftp->{pid} = $child;
+            $sftp->{_expect} = $expect;
 
-            $ok = $conn->expect($eto, ":");
-            unless ($ok) {
-                $sftp->_conn_failed("$name not requested as expected", $conn->error);
+            unless($expect->expect($eto, ":")) {
+                $sftp->_conn_failed("$name not requested as expected", $expect->error);
                 return $sftp;
             }
+            $expect->send("$pass\n");
 
-            $conn->send("$pass\n");
-            $ok = $conn->expect($eto, "\n");
-            unless ($ok) {
-                $sftp->_conn_failed("$name interchange did not complete", $conn->error);
+            unless ($expect->expect($eto, "\n")) {
+                $sftp->_conn_failed("$name interchange did not complete", $expect->error);
                 return $sftp;
             }
         }
         else {
-            warn "ssh cmd: @open2_cmd\n" if ($debug and $debug & 1);
+            _debug "ssh cmd: @open2_cmd\n" if ($debug and $debug & 1);
 
             $sftp->{pid} = eval { open2($sftp->{ssh_in}, $sftp->{ssh_out}, @open2_cmd) };
-            if ($pid != $$) { # that's to workaround a bug in IPC::Open3:
-                require POSIX;
-                POSIX::_exit(-1);
-            }
+            _ipc_open2_bug_workaround $this_pid;
             unless (defined $sftp->{pid}) {
                 $sftp->_conn_failed("Bad ssh command", $!);
                 return $sftp;
@@ -1330,7 +1353,7 @@ sub get {
     my $cb = delete $opts{callback};
     my $umask = delete $opts{umask};
     my $perm = delete $opts{perm};
-    my $copy_perms = delete $opts{copy_perms};
+    my $copy_perm = delete $opts{copy_perm} || delete $opts{copy_perms};
     my $copy_time = delete $opts{copy_time};
     my $overwrite = delete $opts{overwrite};
     my $block_size = delete $opts{block_size} || $sftp->{_block_size};
@@ -1344,8 +1367,8 @@ sub get {
     croak "'perm' and 'umask' options can not be used simultaneously"
 	if (defined $perm and defined $umask);
 
-    croak "'perm' and 'copy_perms' options can not be used simultaneously"
-	if (defined $perm and defined $copy_perms);
+    croak "'perm' and 'copy_perm' options can not be used simultaneously"
+	if (defined $perm and defined $copy_perm);
 
     my $numask;
 
@@ -1358,7 +1381,7 @@ sub get {
     }
 
     $overwrite = 1 unless defined $overwrite;
-    $copy_perms = 1 unless (defined $perm or defined $copy_perms);
+    $copy_perm = 1 unless (defined $perm or defined $copy_perm);
     $copy_time = 1 unless defined $copy_time;
 
     my $a = $sftp->stat($remote)
@@ -1381,7 +1404,7 @@ sub get {
             return undef
         }
 	
-        if ($copy_perms) {
+        if ($copy_perm) {
             my $aperm = $a->perm;
             $perm = 0666 unless defined $perm;
             $a->perm =~ /^(\d+)$/ or die "perm is not numeric";
@@ -1550,7 +1573,7 @@ sub put {
 
     my $umask = delete $opts{umask};
     my $perm = delete $opts{perm};
-    my $copy_perms = delete $opts{copy_perms};
+    my $copy_perm = delete $opts{copy_perm} || delete $opts{copy_perms};
     my $copy_time = delete $opts{copy_time};
     my $overwrite = delete $opts{overwrite};
     my $block_size = delete $opts{block_size} || COPY_SIZE;
@@ -1561,8 +1584,8 @@ sub put {
     croak "'perm' and 'umask' options can not be used simultaneously"
 	if (defined $perm and defined $umask);
 
-    croak "'perm' and 'copy_perms' options can not be used simultaneously"
-	if (defined $perm and defined $copy_perms);
+    croak "'perm' and 'copy_perm' options can not be used simultaneously"
+	if (defined $perm and defined $copy_perm);
 
     my $numask;
 
@@ -1574,7 +1597,7 @@ sub put {
 	$numask = 0777 & ~$umask;
     }
     $overwrite = 1 unless defined $overwrite;
-    $copy_perms = 1 unless (defined $perm or defined $copy_perms);
+    $copy_perm = 1 unless (defined $perm or defined $copy_perm);
     $copy_time = 1 unless defined $copy_time;
 
     my $fh;
@@ -1594,10 +1617,10 @@ sub put {
 	return undef;
     }
 
-    $perm = $lmode & $numask if defined $copy_perms;
+    $perm = $lmode & $numask if $copy_perm;
 
     my $attrs = Net::SFTP::Foreign::Attributes->new;
-    $attrs->set_perm($perm);
+    $attrs->set_perm($perm) if defined $perm;
 
     my $rfh = $sftp->open($remote,
 			     SSH2_FXF_WRITE | SSH2_FXF_CREAT |
@@ -1606,8 +1629,10 @@ sub put {
 	or return undef;
 
     # open does not set the attributes for existant files so we do it again:
-    $sftp->fsetstat($rfh, $attrs)
-	or return undef;
+    if (defined $perm) {
+        $sftp->fsetstat($rfh, $attrs)
+            or return undef;
+    }
 
     my $rfid = $sftp->_rfid($rfh);
     defined $rfid or return undef;
@@ -1842,49 +1867,74 @@ sub glob {
 	my @parents = @res;
 	@res = ();
 	my $part = shift @parts;
-	my $re = _glob_to_regex($part, $strict_leading_dot, $ignore_case);
+	my ($re, $has_wildcards) = _glob_to_regex($part, $strict_leading_dot, $ignore_case);
 
 	for my $parent (@parents) {
 	    my $pfn = $parent->{filename};
-	    $sftp->ls( $pfn,
-		       ordered => $ordered,
-		       _wanted => sub {
-			   my $e = $_[1];
-			   if ($e->{filename} =~ $re) {
-			       my $fn = $e->{filename} = $sftp->join($pfn, $e->{filename});
-			       if ( (@parts or $follow_links)
-				    and S_ISLNK($e->{a}->perm) ) {
-				   if (my $a = $sftp->stat($fn)) {
-				       $e->{a} = $a;
-				   }
-				   else {
-				       $sftp->_call_on_error($on_error, $e);
-				       return undef;
-				   }
-			       }
-			       if (@parts) {
-				   push @res, $e if S_ISDIR($e->{a}->perm)
-			       }
-			       elsif (!$wanted or $wanted->($sftp, $e)) {
-                                   if ($wantarray) {
-                                       if ($realpath) {
-                                           $e->{realpath} = $sftp->realpath($e->{filename});
-                                           unless (defined $e->{realpath}) {
-                                               $sftp->_call_on_error($on_error, $e);
-                                               return undef;
-                                           }
+            if ($has_wildcards) {
+                $sftp->ls( $pfn,
+                           ordered => $ordered,
+                           _wanted => sub {
+                               my $e = $_[1];
+                               if ($e->{filename} =~ $re) {
+                                   my $fn = $e->{filename} = $sftp->join($pfn, $e->{filename});
+                                   if ( (@parts or $follow_links)
+                                        and S_ISLNK($e->{a}->perm) ) {
+                                       if (my $a = $sftp->stat($fn)) {
+                                           $e->{a} = $a;
                                        }
-                                       push @res, ($names_only
-                                                   ? ($realpath ? $e->{realpath} : $e->{filename} )
-                                                   : $e);
+                                       else {
+                                           $sftp->_call_on_error($on_error, $e);
+                                           return undef;
+                                       }
                                    }
-				   $res++;
-			       }
-			   }
-			   return undef
-		       } )
-		or $sftp->_call_on_error($on_error, $parent);
-	}
+                                   if (@parts) {
+                                       push @res, $e if S_ISDIR($e->{a}->perm)
+                                   }
+                                   elsif (!$wanted or $wanted->($sftp, $e)) {
+                                       if ($wantarray) {
+                                           if ($realpath) {
+                                               my $rp = $e->{realpath} = $sftp->realpath($e->{filename});
+                                               unless (defined $rp) {
+                                                   $sftp->_call_on_error($on_error, $e);
+                                                   return undef;
+                                               }
+                                           }
+                                           push @res, ($names_only
+                                                       ? ($realpath ? $e->{realpath} : $e->{filename} )
+                                                       : $e);
+                                       }
+                                       $res++;
+                                   }
+                               }
+                               return undef
+                           } )
+                    or $sftp->_call_on_error($on_error, $parent);
+            }
+            else {
+                my $fn = $sftp->join($pfn, $part);
+                my $method = ((@parts or $follow_links) ? 'stat' : 'lstat');
+                if (my $a = $sftp->$method($fn)) {
+                    my $e = { filename => $fn, a => $a };
+                    if (@parts) {
+                        push @res, $e if S_ISDIR($a->{perm})
+                    }
+                    elsif (!$wanted or $wanted->($sftp, $e)) {
+                        if ($wantarray) {
+                            if ($realpath) {
+                                my $rp = $fn = $e->{realpath} = $sftp->realpath($fn);
+                                unless (defined $rp) {
+                                    $sftp->_call_on_error($on_error, $e);
+                                    next;
+                                }
+                            }
+                            push @res, ($names_only ? $fn : $e)
+                        }
+                        $res++;
+                    }
+                }
+            }
+        }
     }
     return wantarray ? @res : $res;
 }
@@ -1950,7 +2000,7 @@ sub rget {
 
     # my $cb = delete $opts{callback};
     my $umask = delete $opts{umask};
-    my $copy_perms = delete $opts{copy_perms};
+    my $copy_perm = delete $opts{copy_perm} || delete $opts{copy_perms};
     my $copy_time = delete $opts{copy_time};
     my $block_size = delete $opts{block_size};
     my $queue_size = delete $opts{queue_size};
@@ -1972,7 +2022,7 @@ sub rget {
 
     $umask = umask $umask if (defined $umask);
 
-    $copy_perms = 1 unless defined $copy_perms;
+    $copy_perm = 1 unless defined $copy_perm;
     $copy_time = 1 unless defined $copy_time;
 
     require File::Spec;
@@ -1994,7 +2044,7 @@ sub rget {
 				 return 1;
 			     }
 			     else {
-				 if (CORE::mkdir $lpath, ($copy_perms ? $e->{a}->perm & 0777 : 0777)) {
+				 if (CORE::mkdir $lpath, ($copy_perm ? $e->{a}->perm & 0777 : 0777)) {
 				     $count++;
 				     return 1;
 				 }
@@ -2046,7 +2096,7 @@ sub rget {
 							overwrite => $overwrite,
 							queue_size => $queue_size,
 							block_size => $block_size,
-							copy_perms => $copy_perms,
+							copy_perm => $copy_perm,
 							copy_time => $copy_time)) {
 					     $count++;
 					     return undef;
@@ -2083,7 +2133,7 @@ sub rput {
 
     # my $cb = delete $opts{callback};
     my $umask = delete $opts{umask};
-    my $copy_perms = delete $opts{copy_perms};
+    my $copy_perm = delete $opts{copy_perm} || delete $opts{copy_perms};
     my $copy_time = delete $opts{copy_time};
     my $block_size = delete $opts{block_size};
     my $queue_size = delete $opts{queue_size};
@@ -2106,7 +2156,7 @@ sub rput {
     my $qlocal = quotemeta $local;
     my $relocal = qr/^$qlocal(.*)$/i;
 
-    $copy_perms = 1 unless defined $copy_perms;
+    $copy_perm = 1 unless defined $copy_perm;
     $copy_time = 1 unless defined $copy_time;
 
     $umask = umask unless defined $umask;
@@ -2138,7 +2188,7 @@ sub rput {
 			    }
 			    else {
 				my $a = Net::SFTP::Foreign::Attributes->new;
-				$a->set_perm(($copy_perms ? $e->{a}->perm & 0777 : 0777) & $mask);
+				$a->set_perm(($copy_perm ? $e->{a}->perm & 0777 : 0777) & $mask);
 				if ($sftp->mkdir($rpath, $a)) {
 				    $count++;
 				    return 1;
@@ -2186,7 +2236,7 @@ sub rput {
 						       overwrite => $overwrite,
 						       queue_size => $queue_size,
 						       block_size => $block_size,
-						       perm => ($copy_perms ? $e->{a}->perm : 0777) & $mask,
+						       perm => ($copy_perm ? $e->{a}->perm : 0777) & $mask,
 						       copy_time => $copy_time)) {
 					    $count++;
 					    return undef;
@@ -2503,16 +2553,16 @@ Net::SFTP::Foreign - Secure File Transfer Protocol client
 
 =head1 DESCRIPTION
 
-SFTP stands for Secure File Transfer Protocol and is a method of
+SFTP stands for SSH File Transfer Protocol and is a method of
 transferring files between machines over a secure, encrypted
 connection (as opposed to regular FTP, which functions over an
 insecure connection). The security in SFTP comes through its
 integration with SSH, which provides an encrypted transport layer over
 which the SFTP commands are executed.
 
-Net::SFTP::Foreign is a Perl client for the SFTP. It provides a subset
-of the commands listed in the SSH File Transfer Protocol IETF draft,
-which can be found at
+Net::SFTP::Foreign is a Perl client for the SFTP version 3. It
+provides a subset of the commands listed in the SSH File Transfer
+Protocol IETF draft, which can be found at
 L<http://www.openssh.org/txt/draft-ietf-secsh-filexfer-02.txt> (also
 included on this package distribution, on the C<rfc> directory).
 
@@ -2565,6 +2615,9 @@ Most of the methods available from this package return undef on
 failure and a true value or the requested data on
 success. C<$sftp-E<gt>error> can be used to explicitly check for
 errors after every method call.
+
+Don't forget to read also the FAQ and BUGS sections at the end of this
+document!
 
 =over 4
 
@@ -2654,6 +2707,11 @@ process if it doesn't exit by itself.
 Use L<Expect> to handle password authentication or keys requiring a
 passphrase. This is an experimental feature!
 
+=item expect_log_user => $bool
+
+Activate password/passphrase authentication interaction loging (see
+C<Expect::log_user> method documentation).
+
 =back
 
 An explicit check for errors should be included always after the
@@ -2708,7 +2766,7 @@ possible):
 determines if access and modification time attributes have to be
 copied from remote file. Default is to copy them.
 
-=item copy_perms =E<gt> $bool
+=item copy_perm =E<gt> $bool
 
 determines if permision attributes have to be copied from remote
 file. Default is to copy them after applying the local process umask.
@@ -2778,7 +2836,7 @@ This method accepts several options:
 determines if access and modification time attributes have to be
 copied from remote file. Default is to copy them.
 
-=item copy_perms =E<gt> $bool
+=item copy_perm =E<gt> $bool
 
 determines if permision attributes have to be copied from remote
 file. Default is to copy them after applying the local process umask.
@@ -3101,7 +3159,7 @@ The options accepted are:
 use umask C<$umask> to set permissions on the files and directories
 created.
 
-=item copy_perms =E<gt> $bool;
+=item copy_perm =E<gt> $bool;
 
 if set to a true value, file and directory permissions are copied to
 the remote server (after applying the umask). On by default.
@@ -3165,7 +3223,7 @@ Accepted options are:
 use umask C<$umask> to set permissions on the files and directories
 created.
 
-=item copy_perms =E<gt> $bool;
+=item copy_perm =E<gt> $bool;
 
 if set to a true value, file and directory permissions are copied
 to the remote server (after applying the umask). On by default.
@@ -3560,22 +3618,33 @@ on the array:
   my $sftp = Net::SFTP::Foreign->new($host,
                                       more => [qw(-i /home/foo/.ssh/id_dsa)]);
 
+
 =back
 
 =head1 BUGS
 
-Doesn't work on VMS. The problem is related to L<IPC::Open2> not
-working on VMS. Patches are welcome!
+These are the currently known bugs
+
+=over 4
+
+=item - Doesn't work on VMS:
+
+The problem is related to L<IPC::Open2> not working on VMS. Patches
+are welcome!
+
+=item - Dirty cleanup:
 
 On some operative systems, closing the pipes used to comunicate with
-the slave ssh process does not terminate it and a work around has to
+the slave SSH process does not terminate it and a work around has to
 be applied. If you find that your scripts hung when the $sftp object
 gets out of scope, try setting C<$Net::SFTP::Foreign::dirty_cleanup>
 to a true value and also send me a report including the value of
 C<$^O> on your machine and the OpenSSH version.
 
 From version 0.90_18 upwards, a dirty cleanup is performed anyway when
-the ssh process does not terminate by itself in 8 seconds or less.
+the SSH process does not terminate by itself in 8 seconds or less.
+
+=back
 
 Support for Windows OSs is still experimental!
 
@@ -3583,7 +3652,9 @@ Support for taint mode is experimental!
 
 Support for setcwd/cwd is experimental!
 
-Support for password/passphrase handling via Expect is also experimental!
+Support for password/passphrase handling via Expect is also
+experimental. On Windows it only works under the cygwin version of
+Perl.
 
 To report bugs, please, send me and email or use
 L<http://rt.cpan.org>.

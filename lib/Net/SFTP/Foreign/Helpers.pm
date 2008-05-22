@@ -18,9 +18,12 @@ our @EXPORT = qw( _do_nothing
 		  _ensure_list
 		  _glob_to_regex
                   _tcroak
-                  _catch_tainted_args);
+                  _catch_tainted_args
+                  _debug);
 
 sub _do_nothing {}
+
+sub _debug { print STDERR '# ', @_,"\n" }
 
 {
     my $has_sk;
@@ -79,6 +82,7 @@ sub _glob_to_regex {
     my ($glob, $strict_leading_dot, $ignore_case) = @_;
 
     my ($regex, $in_curlies, $escaping);
+    my $wildcards = 0;
 
     my $first_byte = 1;
     while ($glob =~ /\G(.)/g) {
@@ -101,6 +105,7 @@ sub _glob_to_regex {
 		$regex .= quotemeta $char;
 	    }
 	    else {
+                $wildcards++;
 		if ($char eq '*') {
 		    $regex .= ".*";
 		}
@@ -130,6 +135,7 @@ sub _glob_to_regex {
 				
 		}
 		else {
+                    $wildcards--;
 		    $regex .= quotemeta $char;
 		}
 	    }
@@ -140,7 +146,8 @@ sub _glob_to_regex {
 
     croak "invalid glob pattern" if $in_curlies;
 
-    $ignore_case ? qr/^$regex$/i : qr/^$regex$/;
+    my $re = $ignore_case ? qr/^$regex$/i : qr/^$regex$/;
+    wantarray ? ($re, ($wildcards > 0 ? 1 : undef)) : $re
 }
 
 sub _tcroak {

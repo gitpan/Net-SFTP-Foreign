@@ -39,7 +39,8 @@ BEGIN {
 	@ssh = qw( /usr/bin/ssh
 		   /usr/local/bin/ssh
 		   /usr/local/openssh/bin/ssh
-		   /opt/openssh/bin/ssh );
+		   /opt/openssh/bin/ssh
+                   /opt/ssh/bin/ssh );
     }
 
     if (eval {require File::Which; 1}) {

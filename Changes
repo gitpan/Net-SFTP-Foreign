@@ -1,5 +1,17 @@
 Revision history for Net::SFTP::Foreign
 
+1.38  May 20, 2008
+        - limit usage of Expect and PTYs to authentication phase (bug
+          reported by Tom Warkentin)
+        - honour copy_perm option in put method (bug report by Bruce
+          Harold)
+        - copy_perms option renamed to copy_perm for consistency
+          (copy_perms still supported)
+        - glob optimization
+        - typo in Net::SFTP::Foreign::Common::_set_errno was not
+          setting $! correctly (bug report by Rafael Kitover)
+        - add debugging support to _do_io and _set_(status|error)
+
 1.36  Apr 18, 2008
         - forbid usage of Net::SFTP::Foreign methods from Compat
           module (bug reported by Fred Zellinger)
