@@ -1,6 +1,11 @@
 Revision history for Net::SFTP::Foreign
 
 1.38  May 20, 2008
+        - on get, don't change file size passed to callback
+        - on get, survive stat failure for servers with stat/readdir
+          disabled (bug reported by Hussain Syed)
+        - default open mode set to read
+        - add support block_size and queue_size constructor arguements
         - limit usage of Expect and PTYs to authentication phase (bug
           reported by Tom Warkentin)
         - honour copy_perm option in put method (bug report by Bruce

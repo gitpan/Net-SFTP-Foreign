@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.37_06';
+our $VERSION = '1.37_07';
 
 use strict;
 use warnings;
@@ -47,7 +47,8 @@ use Net::SFTP::Foreign::Common;
 our @ISA = qw(Net::SFTP::Foreign::Common);
 
 
-use constant COPY_SIZE => 16384;
+use constant DEFAULT_BLOCK_SIZE => 16384;
+use constant DEFAULT_QUEUE_SIZE => ($windows ? 4 : 10);
 
 sub _next_msg_id { shift->{_msg_id}++ }
 
@@ -260,8 +261,6 @@ sub new {
 
     my $sftp = { _msg_id => 0,
 		 _queue_size => ($windows ? 4 : 10),
-		 _block_size => 16384,
-		 _read_ahead => 16384 * 4,
 		 _bout => '',
 		 _bin => '',
 		 _connected => 1,
@@ -274,6 +273,9 @@ sub new {
 
     my $transport = delete $opts{transport};
 
+    $sftp->{_block_size} = delete $opts{block_size} || DEFAULT_BLOCK_SIZE;
+    $sftp->{_read_ahead} = $sftp->{_block_size} * 4;
+    $sftp->{_queue_size} = delete $opts{queue_size} || DEFAULT_QUEUE_SIZE;
     $sftp->{_timeout} = delete $opts{timeout};
     $sftp->{_autoflush} = delete $opts{autoflush};
 
@@ -629,8 +631,8 @@ sub open {
 
     my ($sftp, $path, $flags, $a) = @_;
     $path = $sftp->_rel2abs($path);
-    $flags ||= 0;
-    $a ||= Net::SFTP::Foreign::Attributes->new;
+    defined $flags or $flags = SSH2_FXF_READ;
+    defined $a or $a = Net::SFTP::Foreign::Attributes->new;
     my $id = $sftp->_queue_new_msg(SSH2_FXP_OPEN, str => $path,
 				  int32 => $flags, attr => $a);
 
@@ -688,7 +690,7 @@ sub sftpread {
 
     unless ($size) {
 	return '' if defined $size;
-	$size = COPY_SIZE;
+	$size = $sftp->{_block_size};
     }
 
     my $rfid = $sftp->_rfid($rfh);
@@ -830,7 +832,7 @@ sub write {
     my $len = length $$bout;
 
     $sftp->flush($rfh, 'out')
-	if ($len > COPY_SIZE or ($len and $sftp->{_autoflush} ));
+	if ($len > $sftp->{_block_size} or ($len and $sftp->{_autoflush} ));
 
     return $datalen;
 }
@@ -862,7 +864,7 @@ sub flush {
 	    my $off = 0;
 	    my $written = $sftp->_write($rfh, $start,
 					sub {
-					    my $data = substr($$bout, $off, COPY_SIZE);
+					    my $data = substr($$bout, $off, $sftp->{_block_size});
 					    $off += length $data;
 					    $data;
 					} );
@@ -1353,7 +1355,7 @@ sub get {
     my $cb = delete $opts{callback};
     my $umask = delete $opts{umask};
     my $perm = delete $opts{perm};
-    my $copy_perm = delete $opts{copy_perm} || delete $opts{copy_perms};
+    my $copy_perm = delete $opts{exists $opts{copy_perm} ? 'copy_perm' : 'copy_perms'};
     my $copy_time = delete $opts{copy_time};
     my $overwrite = delete $opts{overwrite};
     my $block_size = delete $opts{block_size} || $sftp->{_block_size};
@@ -1384,9 +1386,19 @@ sub get {
     $copy_perm = 1 unless (defined $perm or defined $copy_perm);
     $copy_time = 1 unless defined $copy_time;
 
-    my $a = $sftp->stat($remote)
-	or return undef;
-    my $size = $a->size;
+    my $size;
+    my $a = $sftp->stat($remote);
+    if (defined $a) {
+        $size = $a->size
+    }
+    else {
+        if ($copy_time or $copy_perm ) {
+            return undef;
+        }
+        $sftp->_set_status;
+        $sftp->_set_error;
+        $size = -1;
+    }
 
     my $rfh = $sftp->open($remote, SSH2_FXF_READ);
     defined $rfh or return undef;
@@ -1453,7 +1465,7 @@ sub get {
 
     while (1) {
 	# request a new block if queue is not full
-	while (!@msgid or ($size > $askoff and @msgid < $queue_size and $n != 1)) {
+	while (!@msgid or (($size == -1 or $size > $askoff) and @msgid < $queue_size and $n != 1)) {
 
 	    my $id = $sftp->_queue_new_msg(SSH2_FXP_READ, str=> $rfid,
 					   int64 => $askoff, int32 => $block_size);
@@ -1476,7 +1488,7 @@ sub get {
 	unless ($msg) {
 	    if ($sftp->{_status} == SSH2_FX_EOF) {
 		$sftp->_set_error();
-		next if $roff != $loff;
+                $roff != $loff and next;
 	    }
 	    last;
 	}
@@ -1496,7 +1508,7 @@ sub get {
         }
 
 	if (defined $cb) {
-	    $size = $loff if $loff > $size;
+	    # $size = $loff if ($loff > $size and $size != -1);
 	    $cb->($sftp, $data, $roff, $size);
 
             last if $sftp->error;
@@ -1576,8 +1588,8 @@ sub put {
     my $copy_perm = delete $opts{copy_perm} || delete $opts{copy_perms};
     my $copy_time = delete $opts{copy_time};
     my $overwrite = delete $opts{overwrite};
-    my $block_size = delete $opts{block_size} || COPY_SIZE;
-    my $queue_size = delete $opts{queue_size} || 10;
+    my $block_size = delete $opts{block_size} || $sftp->{_block_size};
+    my $queue_size = delete $opts{queue_size} || $sftp->{_queue_size};
 
     %opts and croak "invalid option(s) '".CORE::join("', '", keys %opts)."'";
 
@@ -2542,7 +2554,7 @@ __END__
 
 =head1 NAME
 
-Net::SFTP::Foreign - Secure File Transfer Protocol client
+Net::SFTP::Foreign - SSH File Transfer Protocol client
 
 =head1 SYNOPSIS
 
@@ -2564,10 +2576,11 @@ Net::SFTP::Foreign is a Perl client for the SFTP version 3. It
 provides a subset of the commands listed in the SSH File Transfer
 Protocol IETF draft, which can be found at
 L<http://www.openssh.org/txt/draft-ietf-secsh-filexfer-02.txt> (also
-included on this package distribution, on the C<rfc> directory).
+included on this package distribution, on the C<rfc> directory) plus
+some additional handy high level methods.
 
 Net::SFTP::Foreign uses any compatible C<ssh> command installed on
-your system (for instance, OpenSSH C<ssh>) to establish the secure
+the system (for instance, OpenSSH C<ssh>) to establish the secure
 connection to the remote server.
 
 Formerly, Net::SFTP::Foreign was a hacked version of Net::SFTP, but
@@ -2712,6 +2725,13 @@ passphrase. This is an experimental feature!
 Activate password/passphrase authentication interaction loging (see
 C<Expect::log_user> method documentation).
 
+=item block_size => $default_block_size
+
+=item queue_size => $default_queue_size
+
+default C<block_size> and C<queue_size> used for read and write
+operations (see the C<put> or C<get> documentation).
+
 =back
 
 An explicit check for errors should be included always after the
@@ -2785,7 +2805,13 @@ permissions are ignored.
 
 size of the blocks the file is being splittered on for
 transfer. Incrementing this value can improve performance but some
-servers limit its size.
+servers limit the maximum size.
+
+=item queue_size =E<gt> $size
+
+read and write requests are pipelined in order to maximize transfer
+throughput. This option allows to set the maximum number of requests
+that can be concurrently waiting for a server response.
 
 =item callback =E<gt> $callback
 
@@ -2805,8 +2831,6 @@ progress meters, etc.:
         print "Read $offset / $size bytes\r";
     }
 
-=back
-
 The C<abort> method can be called from inside the callback to abort
 the transfer:
 
@@ -2817,6 +2841,8 @@ the transfer:
         }
     }
 
+
+=back
 
 =item $sftp-E<gt>get_content($remote)
 
@@ -2857,6 +2883,12 @@ size of the blocks the file is being splittered on for
 transfer. Incrementing this value can improve performance but some
 servers limit its size and if this limit is overpassed the command
 will fail.
+
+=item queue_size =E<gt> $size
+
+read and write requests are pipelined in order to maximize transfer
+throughput. This option allows to set the maximum number of requests
+that can be concurrently waiting for a server response.
 
 =item callback =E<gt> $callback
 
