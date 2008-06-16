@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.37_07';
+our $VERSION = '1.38';
 
 use strict;
 use warnings;
@@ -304,22 +304,36 @@ sub new {
             defined $host or croak "sftp target host not defined";
 
             my $ssh_cmd = delete $opts{ssh_cmd};
-            @open2_cmd = defined $ssh_cmd ? $ssh_cmd : 'ssh';
+            $ssh_cmd = 'ssh' unless defined $ssh_cmd;
+            @open2_cmd = ($ssh_cmd);
 
-            my $port = delete $opts{port};
-            push @open2_cmd, -p => $port if defined $port;
-
-            my $user = delete $opts{user};
-            push @open2_cmd, -l => $user if defined $user;
-
-            my $more = delete $opts{more};
-            if (defined $more) {
-                if (!ref($more) and $more =~ /^-\w\s+\S/) {
-                    carp "'more' argument looks like if it needs to be splited first"
-                }
-                push @open2_cmd, _ensure_list($more)
+            my $ssh_cmd_interface = delete $opts{ssh_cmd_interface};
+            unless (defined $ssh_cmd_interface) {
+                $ssh_cmd_interface = ( $ssh_cmd =~ /\bplink(?:\.exe)?$/i
+                                       ? 'plink'
+                                       : 'ssh');
             }
 
+            my $port = delete $opts{port};
+            my $user = delete $opts{user};
+
+            my $more = delete $opts{more};
+            carp "'more' argument looks like if it needs to be splited first"
+                if (defined $more and !ref($more) and $more =~ /^-\w\s+\S/);
+
+            if ($ssh_cmd_interface eq 'plink') {
+                $pass and !$passphrase
+                    and croak "Password authentication via Expect is not supported for the plink client";
+                push @open2_cmd, -P => $port if defined $port;
+            }
+            elsif ($ssh_cmd_interface eq 'ssh') {
+                push @open2_cmd, -p => $port if defined $port;
+            }
+            else {
+                die "Unsupported ssh_cmd_interface '$ssh_cmd_interface'";
+            }
+            push @open2_cmd, -l => $user if defined $user;
+            push @open2_cmd, _ensure_list($more) if defined $more;
             push @open2_cmd, $host, -s => 'sftp';
         }
     }
@@ -2641,6 +2655,12 @@ document!
 Opens a new SFTP connection with a remote host C<$host>, and returns a
 Net::SFTP::Foreign object representing that open connection.
 
+An explicit check for errors should be included always after the
+constructor call:
+
+  my $sftp = Net::SFTP::Foreign->new(...);
+  $sftp->error and die "SSH connection failed: " . $sftp->error;
+
 C<%args> can contain:
 
 =over 4
@@ -2668,10 +2688,30 @@ the C<-v> option:
 
   my $sftp = Net::SFTP::Foreign->new($host, more => '-v');
 
+Note that this option expects a single command argument or a reference
+to an array of arguments. For instance:
+
+  more => '-v'         # RIGHT
+  more => ['-v']       # RIGHT
+  more => "-i $key"    # WRONG!!!
+  more => [-i => $key] # RIGHT
 
 =item ssh_cmd =E<gt> $sshcmd
 
 name of the external SSH client. By default C<ssh> is used.
+
+For instance:
+
+  my $sftp = Net::SFTP::Foreign->new($host, ssh_cmd => 'plink');
+
+=item ssh_cmd_interface =E<gt> 'plink' or 'ssh'
+
+declares the command line interface that the SSH client used to
+connect to the remote host understands. Currently C<plink> and C<ssh>
+are supported.
+
+This option would be rarely required as the module infers the
+interface from the SSH command name.
 
 =item open2_cmd =E<gt> [@cmd]
 
@@ -2702,8 +2742,8 @@ the SFTP connection becomes invalid.
 
 =item transport =E<gt> [$in_fh, $out_fh, $pid]
 
-This option allows to use an already open pipe or socket as the
-transport for the SFTP protocol.
+allows to use an already open pipe or socket as the transport for the
+SFTP protocol.
 
 It can be (ab)used to make this module work with password
 authentication or with keys requiring a passphrase.
@@ -2713,32 +2753,26 @@ not cause the process at the other side to exit. The additional
 C<$pid> argument can be used to instruct this module to kill that
 process if it doesn't exit by itself.
 
-=item password => $password
+=item password =E<gt> $password
 
-=item passphrase => $passphrase
+=item passphrase =E<gt> $passphrase
 
-Use L<Expect> to handle password authentication or keys requiring a
+uses L<Expect> to handle password authentication or keys requiring a
 passphrase. This is an experimental feature!
 
-=item expect_log_user => $bool
+=item expect_log_user =E<gt> $bool
 
-Activate password/passphrase authentication interaction loging (see
+activates password/passphrase authentication interaction loging (see
 C<Expect::log_user> method documentation).
 
-=item block_size => $default_block_size
+=item block_size =E<gt> $default_block_size
 
-=item queue_size => $default_queue_size
+=item queue_size =E<gt> $default_queue_size
 
 default C<block_size> and C<queue_size> used for read and write
 operations (see the C<put> or C<get> documentation).
 
 =back
-
-An explicit check for errors should be included always after the
-constructor call:
-
-  my $sftp = Net::SFTP::Foreign->new(...);
-  $sftp->error and die "SSH connection failed: " . $sftp->error;
 
 =item $sftp-E<gt>error
 
@@ -3650,12 +3684,40 @@ on the array:
   my $sftp = Net::SFTP::Foreign->new($host,
                                       more => [qw(-i /home/foo/.ssh/id_dsa)]);
 
+=item Plink and password authentication
+
+B<Q>: Why password authentication is not supported for the plink SSH
+client?
+
+B<A>: A bug in plink breaks it.
+
+As a work around, you can use plink C<-pw> argument to pass the
+password on the command line, but it is B<highly insecure>, anyone
+with a shell account on the machine would be able to get the password.
+Use at your own risk!:
+
+  # HIGHLY INSECURE!!!
+  my $sftp = Net::SFTP::Foreign->new('foo@bar',
+                                     ssh_cmd => 'plink',
+                                     more => [-pw => $password]);
+  $sftp->error and die $sftp->error;
+
+=item Plink
+
+B<Q>: What is C<plink>?
+
+B<A>: Plink is a command line tool distributed with the
+L<PuTTY|http://the.earth.li/~sgtatham/putty/> SSH client. Very popular
+between MS Windows users, it is also available for Linux and other
+Unixes now.
 
 =back
 
+
+
 =head1 BUGS
 
-These are the currently known bugs
+These are the currently known bugs:
 
 =over 4
 
@@ -3678,7 +3740,7 @@ the SSH process does not terminate by itself in 8 seconds or less.
 
 =back
 
-Support for Windows OSs is still experimental!
+Support for MS Windows OSs is still experimental!
 
 Support for taint mode is experimental!
 
@@ -3687,6 +3749,8 @@ Support for setcwd/cwd is experimental!
 Support for password/passphrase handling via Expect is also
 experimental. On Windows it only works under the cygwin version of
 Perl.
+
+
 
 To report bugs, please, send me and email or use
 L<http://rt.cpan.org>.
