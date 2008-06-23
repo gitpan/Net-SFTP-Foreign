@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.38';
+our $VERSION = '1.39';
 
 use strict;
 use warnings;
@@ -383,7 +383,7 @@ sub new {
             my $child = eval { open2($sftp->{ssh_in}, $sftp->{ssh_out}, '-') };
             if (defined $child and !$child) {
                 $pty->make_slave_controlling_terminal;
-                exec @open2_cmd;
+                do { exec @open2_cmd }; # work around suppress warning under mod_perl
                 exit -1;
             }
             _ipc_open2_bug_workaround $this_pid;
@@ -2762,7 +2762,7 @@ passphrase. This is an experimental feature!
 
 =item expect_log_user =E<gt> $bool
 
-activates password/passphrase authentication interaction loging (see
+activates password/passphrase authentication interaction logging (see
 C<Expect::log_user> method documentation).
 
 =item block_size =E<gt> $default_block_size
@@ -3713,8 +3713,6 @@ Unixes now.
 
 =back
 
-
-
 =head1 BUGS
 
 These are the currently known bugs:
@@ -3744,13 +3742,11 @@ Support for MS Windows OSs is still experimental!
 
 Support for taint mode is experimental!
 
-Support for setcwd/cwd is experimental!
+Support for plink is experimental!
 
 Support for password/passphrase handling via Expect is also
 experimental. On Windows it only works under the cygwin version of
 Perl.
-
-
 
 To report bugs, please, send me and email or use
 L<http://rt.cpan.org>.
