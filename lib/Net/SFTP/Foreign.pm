@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.39';
+our $VERSION = '1.40';
 
 use strict;
 use warnings;
@@ -528,7 +528,9 @@ sub _get_msg_and_check {
 
 	if ($type != $etype) {
 	    if ($type == SSH2_FXP_STATUS) {
-		my $status = $sftp->_set_status($msg->get_int32, $msg->get_str);
+                my $code = $msg->get_int32;
+                my $str = $msg->get_str;
+		my $status = $sftp->_set_status($code, (defined $str ? $str : ()));
 		$sftp->_set_error($err, $errstr, $status);
 	    }
 	    else {

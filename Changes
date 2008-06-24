@@ -1,5 +1,10 @@
 Revision history for Net::SFTP::Foreign
 
+1.40  Jun 24, 2008
+        - work around for servers that do not include the mandatory
+          error message on SSH_FXP_STATUS responses (bug report by
+          Hugh Lampert).
+
 1.39  Jun 23, 2008
         - suppress warning on mod_perl environments (bug and solution
           reported by Eric Rybski).
@@ -37,6 +42,9 @@ Revision history for Net::SFTP::Foreign
 1.34  Jan 8, 2008
         - document rput. It said it was not implemented (bug report
           by Paul Kolano).
+        - put method was failing for binary files under Windows
+          because binmode was not set on the local filehandler (bug
+          report and patch by Patrick Frazer).
 
 1.33  Jan 6, 2008
         - rremove was not removing dirs (bug report by Paul Kolano).
