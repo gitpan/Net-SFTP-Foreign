@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.40';
+our $VERSION = '1.41';
 
 use strict;
 use warnings;
@@ -1377,6 +1377,7 @@ sub get {
     my $block_size = delete $opts{block_size} || $sftp->{_block_size};
     my $queue_size = delete $opts{queue_size} || $sftp->{_queue_size};
     my $dont_save = delete $opts{dont_save};
+    my $conversion = delete $opts{conversion};
 
     my $oldumask = umask;
 
@@ -1470,12 +1471,15 @@ sub get {
         }
     }
 
+    my $converter = _gen_converter $conversion;
+
     my @askoff;
     my $askoff = 0;
     my $loff = 0;
     my $rfno = fileno($sftp->{ssh_in});
     my $selin = '';
     my $n = 0;
+    my $adjustment = 0;
 
     vec ($selin, $rfno, 1) = 1;
 
@@ -1523,14 +1527,17 @@ sub get {
           $askoff = $loff;
         }
 
-	if (defined $cb) {
+        my $adjustment_before = $adjustment;
+        $adjustment += $converter->($data) if $converter;
+
+        if (length($data) and defined $cb) {
 	    # $size = $loff if ($loff > $size and $size != -1);
-	    $cb->($sftp, $data, $roff, $size);
+	    $cb->($sftp, $data, $roff + $adjustment_before, $size + $adjustment);
 
             last if $sftp->error;
 	}
 
-        unless ($dont_save) {
+        if (length($data) and !$dont_save) {
             unless (print $fh $data) {
                 $sftp->_set_error(SFTP_ERR_LOCAL_WRITE_FAILED,
                                   "unable to write data to local file $local", $!);
@@ -1542,6 +1549,42 @@ sub get {
     $sftp->_get_msg for (@msgid);
 
     return undef if $sftp->error;
+
+    # if a converter is in place, and aditional call has to be
+    # performed in order to flush any pending buffered data
+    if ($converter) {
+        my $data = '';
+        my $adjustment_before = $adjustment;
+        $adjustment += $converter->($data);
+
+        if (length($data) and defined $cb) {
+	    # $size = $loff if ($loff > $size and $size != -1);
+	    $cb->($sftp, $data, $askoff + $adjustment_before, $size + $adjustment);
+            return undef if $sftp->error;
+	}
+
+        if (length($data) and !$dont_save) {
+            unless (print $fh $data) {
+                $sftp->_set_error(SFTP_ERR_LOCAL_WRITE_FAILED,
+                                  "unable to write data to local file $local", $!);
+                return undef;
+            }
+        }
+    }
+
+    # we call the callback one last time with an empty string;
+    if (defined $cb) {
+        my $data = '';
+        $cb->($sftp, $data, $askoff + $adjustment, $size + $adjustment);
+        return undef if $sftp->error;
+        if (length($data) and !$dont_save) {
+            unless (print $fh $data) {
+                $sftp->_set_error(SFTP_ERR_LOCAL_WRITE_FAILED,
+                                  "unable to write data to local file $local", $!);
+                return undef;
+            }
+        }
+    }
 
     unless ($dont_save) {
         unless (CORE::close $fh) {
@@ -1601,11 +1644,12 @@ sub put {
 
     my $umask = delete $opts{umask};
     my $perm = delete $opts{perm};
-    my $copy_perm = delete $opts{copy_perm} || delete $opts{copy_perms};
+    my $copy_perm = delete $opts{exists $opts{copy_perm} ? 'copy_perm' : 'copy_perms'};
     my $copy_time = delete $opts{copy_time};
     my $overwrite = delete $opts{overwrite};
     my $block_size = delete $opts{block_size} || $sftp->{_block_size};
     my $queue_size = delete $opts{queue_size} || $sftp->{_queue_size};
+    my $conversion = delete $opts{conversion};
 
     %opts and croak "invalid option(s) '".CORE::join("', '", keys %opts)."'";
 
@@ -1670,57 +1714,83 @@ sub put {
     my $readoff = 0;
     my $rfno = fileno($sftp->{ssh_in});
 
- OK: for (1) {
-	my $eof;
-	while (1) {
-	    if (!$eof and @msgid < $queue_size) {
-		my $len = CORE::read $fh, my ($data), $block_size;
-		unless (defined $len) {
-		    $sftp->_set_error(SFTP_ERR_LOCAL_READ_ERROR,
-				     "Couldn't read from local file '$local'", $!);
-		    last OK;
-		}
+    my $converter = _gen_converter $conversion;
+
+    my $converted_input = '';
+    my ($eof, $eof_t);
+    # when a converter is used the EOF can become delayed by
+    # the buffering introduced, we use $eof_t to account for that.
+ OK: while (1) {
+        if (!$eof and @msgid < $queue_size) {
+            my ($data, $len);
+            if ($converter) {
+                if (!$eof_t and length $converted_input < $block_size) {
+                    my $read = CORE::read($fh, my $input, $block_size * 4);
+                    unless ($read) {
+                        unless (defined $read) {
+                            $sftp->_set_error(SFTP_ERR_LOCAL_READ_ERROR,
+                                              "Couldn't read from local file '$local'", $!);
+                            last OK;
+                        }
+                        $eof_t = 1;
+                    }
+                    # the last time the $converter call is
+                    # performed it receives an empty string
+                    $lsize += $converter->($input);
+                    $converted_input .= $input;
+                }
+                $data = substr($converted_input, 0, $block_size, '');
+                $len = length $data;
+                $eof = 1 if ($eof_t and !$len);
+            }
+            else {
+                $len = CORE::read($fh, $data, $block_size * 4);
+                unless ($len) {
+                    unless (defined $len) {
+                        $sftp->_set_error(SFTP_ERR_LOCAL_READ_ERROR,
+                                          "Couldn't read from local file '$local'", $!);
+                        last OK;
+                    }
+                    $eof = 1;
+                }
+            }
+
+            my $nextoff = $readoff + $len;
+
+            if (defined $cb) {
+                $lsize = $nextoff if $nextoff > $lsize;
+                $cb->($sftp, $data, $readoff, $lsize);
+
+                last OK if $sftp->error;
+
+                $len = length $data;
+                $nextoff = $readoff + $len;
+            }
+
+            if (length $data) {
+                my $id = $sftp->_queue_new_msg(SSH2_FXP_WRITE, str => $rfid,
+                                               int64 => $readoff, str => $data);
 		
-		my $nextoff = $readoff + $len;
+                push @msgid, $id;
+                push @readoff, $readoff;
+                $readoff = $nextoff;
+            }
+        }
 
-		if (defined $cb) {
-		    $lsize = $nextoff if $nextoff > $lsize;
-		    $cb->($sftp, $data, $readoff, $lsize);
+        last if ($eof and !@msgid);
 
-                    last OK if $sftp->error;
+        next unless  ($eof
+                      or @msgid >= $queue_size
+                      or $sftp->_do_io(0));
 
-		    $len = length $data;
-		    $nextoff = $readoff + $len;
-		}
-
-		if ($len) {
-		    my $id = $sftp->_queue_new_msg(SSH2_FXP_WRITE, str => $rfid,
-                                                   int64 => $readoff, str => $data);
-		
-		    push @msgid, $id;
-		    push @readoff, $readoff;
-		    $readoff = $nextoff;
-		}
-		else {
-		    $eof = 1;
-		}
-	    }
-
-	    last if ($eof and !@msgid);
-
-	    next unless  ($eof
-			  or @msgid >= $queue_size
-			  or $sftp->_do_io(0));
-
-	    my $id = shift @msgid;
-	    my $loff = shift @readoff;
-	    unless ($sftp->_check_status_ok($id,
-					    SFTP_ERR_REMOTE_WRITE_FAILED,
-					    "Couldn't write to remote file")) {
-		last OK;
-	    }
-	}
-    };
+        my $id = shift @msgid;
+        my $loff = shift @readoff;
+        unless ($sftp->_check_status_ok($id,
+                                        SFTP_ERR_REMOTE_WRITE_FAILED,
+                                        "Couldn't write to remote file")) {
+            last OK;
+        }
+    }
 
     CORE::close $fh;
 
@@ -2028,7 +2098,7 @@ sub rget {
 
     # my $cb = delete $opts{callback};
     my $umask = delete $opts{umask};
-    my $copy_perm = delete $opts{copy_perm} || delete $opts{copy_perms};
+    my $copy_perm = delete $opts{exists $opts{copy_perm} ? 'copy_perm' : 'copy_perms'};
     my $copy_time = delete $opts{copy_time};
     my $block_size = delete $opts{block_size};
     my $queue_size = delete $opts{queue_size};
@@ -2036,6 +2106,7 @@ sub rget {
     my $newer_only = delete $opts{newer_only};
     my $on_error = delete $opts{on_error};
     my $ignore_links = delete $opts{ignore_links};
+    my $conversion = delete $opts{conversion};
 
     # my $relative_links = delete $opts{relative_links};
 
@@ -2125,7 +2196,8 @@ sub rget {
 							queue_size => $queue_size,
 							block_size => $block_size,
 							copy_perm => $copy_perm,
-							copy_time => $copy_time)) {
+							copy_time => $copy_time,
+                                                        conversion => $conversion )) {
 					     $count++;
 					     return undef;
 					 }
@@ -2161,7 +2233,7 @@ sub rput {
 
     # my $cb = delete $opts{callback};
     my $umask = delete $opts{umask};
-    my $copy_perm = delete $opts{copy_perm} || delete $opts{copy_perms};
+    my $copy_perm = delete $opts{exists $opts{copy_perm} ? 'copy_perm' : 'copy_perms'};
     my $copy_time = delete $opts{copy_time};
     my $block_size = delete $opts{block_size};
     my $queue_size = delete $opts{queue_size};
@@ -2169,6 +2241,7 @@ sub rput {
     my $newer_only = delete $opts{newer_only};
     my $on_error = delete $opts{on_error};
     my $ignore_links = delete $opts{ignore_links};
+    my $conversion = delete $opts{conversion};
 
     # my $relative_links = delete $opts{relative_links};
 
@@ -2265,7 +2338,8 @@ sub rput {
 						       queue_size => $queue_size,
 						       block_size => $block_size,
 						       perm => ($copy_perm ? $e->{a}->perm : 0777) & $mask,
-						       copy_time => $copy_time)) {
+						       copy_time => $copy_time,
+                                                       conversion => $conversion )) {
 					    $count++;
 					    return undef;
 					}
@@ -2849,6 +2923,11 @@ read and write requests are pipelined in order to maximize transfer
 throughput. This option allows to set the maximum number of requests
 that can be concurrently waiting for a server response.
 
+=item conversion =E<gt> $conversion
+
+on the fly data conversion of the file contents can be performed with
+this option. See L</On the fly data conversion> bellow.
+
 =item callback =E<gt> $callback
 
 C<$callback> is a reference to a subroutine that will be called after
@@ -2877,6 +2956,13 @@ the transfer:
         }
     }
 
+The callback will be called one last time with an empty data argument
+to indicate the end of the file transfer.
+
+The size argument can change between different calls as data is
+transferred (for instance, when on the fly data conversion is being
+performed or when the size of the file can not be retrieved with the
+C<stat> SFTP command before the data transfer starts).
 
 =back
 
@@ -2926,6 +3012,11 @@ read and write requests are pipelined in order to maximize transfer
 throughput. This option allows to set the maximum number of requests
 that can be concurrently waiting for a server response.
 
+=item conversion =E<gt> $conversion
+
+on the fly data conversion of the file contents can be performed with
+this option. See L</On the fly data conversion> bellow.
+
 =item callback =E<gt> $callback
 
 C<$callback> is a reference to a subrutine that will be called after
@@ -2936,11 +3027,19 @@ Net::SFTP::Foreign object; the data that is going to be written to the
 remote file; the offset from the beginning of the file in bytes; and
 the total size of the file in bytes.
 
+The callback will be called one last time with an empty data argument
+to indicate the end of the file transfer.
+
+The size argument can change between different calls as data is
+transferred (for instance, when on the fly data conversion is being
+performed).
+
 This mechanism can be used to provide status messages, download
 progress meters, etc.
 
 The C<abort> method can be called from inside the callback to abort
 the transfer.
+
 
 =back
 
@@ -3271,6 +3370,8 @@ first!).
 
 =item queue_size =E<gt> $queue_size
 
+=item conversion =E<gt> $conversion
+
 see docs for C<get> method.
 
 =back
@@ -3335,7 +3436,10 @@ first!).
 
 =item queue_size =E<gt> $queue_size
 
+=item conversion =E<gt> $conversion
+
 see docs C<put> method docs.
+
 
 =back
 
@@ -3589,6 +3693,44 @@ it. User C<realpath> to normalize it:
   $sftp->symlink("foo.lnk" => $sftp->realpath("../bar"))
 
 =back
+
+=head2 On the fly data conversion
+
+Some of the methods on this module allow to perform on the fly data
+conversion via the C<conversion> option that accepts the following
+values:
+
+=over 4
+
+=item conversion =E<gt> 'dos2unix'
+
+converts LF+CR line endings (as commonly used under MS-DOS) to LF
+(Unix).
+
+=item conversion =E<gt> 'unix2dos'
+
+converts LF line endings (Unix) to LF+CR (DOS).
+
+=item conversion =E<gt> sub { CONVERT $_[0] }
+
+when a callback is given, it is called repeatly as chunks of data
+become available and it has to change C<$_[0]> in place in order to
+perform the conversion.
+
+Also, the subroutine is called one last time with and empty data
+string to indicate that the transfer has finished, so that
+intermediate buffers could be flushed.
+
+Note that when written a conversion subroutine special care has to be
+taken to handle sequences crossing chunk borders.
+
+=back
+
+The data conversion is always performed before any other callback
+subroutine is called.
+
+See the Wikipedia discussion on line endings for details about the
+different conventions: L<http://en.wikipedia.org/wiki/Newline>.
 
 =head1 FAQ
 

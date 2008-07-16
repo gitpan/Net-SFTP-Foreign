@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign::Helpers;
 
-our $VERSION = '1.28';
+our $VERSION = '1.41';
 
 use strict;
 use warnings;
@@ -19,7 +19,9 @@ our @EXPORT = qw( _do_nothing
 		  _glob_to_regex
                   _tcroak
                   _catch_tainted_args
-                  _debug);
+                  _debug
+                  _gen_converter
+                );
 
 sub _do_nothing {}
 
@@ -185,6 +187,85 @@ sub _catch_tainted_args {
                 }
             }
         }
+    }
+}
+
+sub _gen_dos2unix {
+    my $previous;
+    my $done;
+    sub {
+        $done and die "Internal error: bad calling sequence for unix2dos transformation";
+        my $debug = ($Net::SFTP::Foreing::debug and $Net::SFTP::Foreing::debug & 128);
+        my $adjustment = 0;
+        for (@_) {
+            if ($debug) {
+                _debug ("before dos2unixunix2dos: previous: $previous, data follows...");
+                _hexdump($_);
+            }
+            if (length) {
+                if ($previous) {
+                    $adjustment++;
+                    $_ = "\x0d$_";
+                }
+                $adjustment -= $previous = s/\x0d\z//s;
+                $adjustment -= s/\x0d\x0a/\x0a/gs;
+            }
+            elsif ($previous) {
+                $previous = 0;
+                $done = 1;
+                $adjustment++;
+                $_ = "\x0d";
+            }
+            if ($debug) {
+                _debug ("after dos2unix: previous: $previous, adjustment: $adjustment, data follows...");
+                _hexdump($_);
+            }
+            return $adjustment;
+        }
+    }
+}
+
+sub _unix2dos {
+    my $debug = ($Net::SFTP::Foreing::debug and $Net::SFTP::Foreing::debug & 128);
+    if ($debug) {
+        _debug ("before unix2dos: data follows...");
+        _hexdump($_[0]);
+    }
+    my $adjustment = $_[0] =~ s/\x0a/\x0d\x0a/gs;
+    if ($debug) {
+        _debug ("before unix2dos: adjustment: $adjustment, data follows...");
+        _hexdump($_[0]);
+    }
+    $adjustment;
+}
+
+sub _gen_unix2dos { \&_unix2dos }
+
+sub _gen_converter {
+    my $conversion = shift;
+
+    return undef unless defined $conversion;
+
+    if (ref $conversion) {
+        if (ref $conversion eq 'CODE') {
+            return sub {
+                my $before = length $_[0];
+                $conversion->($_[0]);
+                length $_[0] - $before;
+            }
+        }
+        else {
+            croak "unsupported conversion argument"
+        }
+    }
+    elsif ($conversion eq 'dos2unix') {
+        return _gen_dos2unix;
+    }
+    elsif ($conversion eq 'unix2dos') {
+        return _gen_unix2dos
+    }
+    else {
+        croak "unknown conversion '$conversion'";
     }
 }
 

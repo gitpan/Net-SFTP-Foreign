@@ -1,5 +1,11 @@
 Revision history for Net::SFTP::Foreign
 
+1.41  Jul 16, 2008
+        - add support for on the fly data conversions including
+          dos2unix and unix2dos
+        - copy_perm => 0 was being ignored in several methods (bug
+          report by Dave Tauzell)
+
 1.40  Jun 24, 2008
         - work around for servers that do not include the mandatory
           error message on SSH_FXP_STATUS responses (bug report by
