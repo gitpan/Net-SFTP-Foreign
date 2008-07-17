@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.41';
+our $VERSION = '1.42';
 
 use strict;
 use warnings;
@@ -1374,6 +1374,7 @@ sub get {
     my $copy_perm = delete $opts{exists $opts{copy_perm} ? 'copy_perm' : 'copy_perms'};
     my $copy_time = delete $opts{copy_time};
     my $overwrite = delete $opts{overwrite};
+    my $resume = delete $opts{resume};
     my $block_size = delete $opts{block_size} || $sftp->{_block_size};
     my $queue_size = delete $opts{queue_size} || $sftp->{_queue_size};
     my $dont_save = delete $opts{dont_save};
@@ -1388,6 +1389,11 @@ sub get {
 
     croak "'perm' and 'copy_perm' options can not be used simultaneously"
 	if (defined $perm and defined $copy_perm);
+
+    if ($resume and $conversion) {
+        carp "resume option is useless when data conversion has also been requested";
+        undef $resume;
+    }
 
     my $numask;
 
@@ -1409,25 +1415,28 @@ sub get {
         $size = $a->size
     }
     else {
-        if ($copy_time or $copy_perm ) {
-            return undef;
-        }
-        $sftp->_set_status;
-        $sftp->_set_error;
+        return undef if ($copy_time or $copy_perm);
         $size = -1;
     }
 
-    my $rfh = $sftp->open($remote, SSH2_FXF_READ);
-    defined $rfh or return undef;
+    if ($resume and $resume eq 'auto') {
+        undef $resume;
+        if (my @lstat = CORE::stat $local) {
+            if (defined $a and $a->mtime <= $lstat[9]) {
+                $resume = 1;
+            }
+        }
+    }
 
-    my $rfid = $sftp->_rfid($rfh);
-    defined $rfid or return undef;
+    my ($rfh, $fh);
+    my $askoff = 0;
 
-    my $fh;
-    my @msgid;
-
-    unless ($dont_save) {
-        if (!$overwrite and -e $local) {
+    if ($dont_save) {
+        $rfh = $sftp->open($remote, SSH2_FXF_READ);
+        defined $rfh or return undef;
+    }
+    else {
+        if (!$overwrite and !$resume and -e $local) {
             $sftp->_set_error(SFTP_ERR_LOCAL_ALREADY_EXISTS,
                               "local file $local already exists");
             return undef
@@ -1442,20 +1451,50 @@ sub get {
 
         $perm = (0666 & $numask) unless defined $perm;
 
-        my $lumask = ~$perm & 0666;
-        umask $lumask;
+        if ($resume) {
+            if (CORE::open $fh, '+<', $local) {
+                binmode $fh;
+                CORE::seek($fh, 0, 2);
+                $askoff = CORE::tell $fh;
+                if ($askoff < 0) {
+                    # something is going really wrong here, fall
+                    # back to non-resuming mode...
+                    $askoff = 0;
+                    undef $fh;
+                }
+                else {
+                    if ($size >=0 and $askoff > $size) {
+                        $sftp->_set_error(SFTP_ERR_LOCAL_BIGGER_THAN_REMOTE,
+                                          "Couldn't resume transfer, local file is bigger than remote");
+                        return undef;
+                    }
 
-        unlink $local;
-
-        unless (CORE::open $fh, ">", $local) {
-            umask $oldumask;
-            $sftp->_set_error(SFTP_ERR_LOCAL_OPEN_FAILED,
-                              "Can't open $local", $!);
-            return undef;
+                    $size == $askoff and return 1;
+                }
+            }
         }
-        umask $oldumask;
 
-        binmode $fh;
+        # we open the remote file so late in order to skip it when
+        # resuming an already completed transfer:
+        $rfh = $sftp->open($remote, SSH2_FXF_READ);
+        defined $rfh or return undef;
+
+        unless (defined $fh) {
+            my $lumask = ~$perm & 0666;
+            umask $lumask;
+
+            unlink $local;
+
+            unless (CORE::open $fh, '>', $local) {
+                umask $oldumask;
+                $sftp->_set_error(SFTP_ERR_LOCAL_OPEN_FAILED,
+                                  "Can't open $local", $!);
+                return undef;
+            }
+            umask $oldumask;
+
+            binmode $fh;
+        }
 
         # if ((0666 & ~$lumask) != $perm) { ...
         # this optimization removed because it doesn't work for already
@@ -1473,13 +1512,16 @@ sub get {
 
     my $converter = _gen_converter $conversion;
 
+    my $rfid = $sftp->_rfid($rfh);
+    defined $rfid or return undef;
+
+    my @msgid;
     my @askoff;
-    my $askoff = 0;
-    my $loff = 0;
+    my $loff = $askoff;
     my $rfno = fileno($sftp->{ssh_in});
+    my $adjustment = 0;
     my $selin = '';
     my $n = 0;
-    my $adjustment = 0;
 
     vec ($selin, $rfno, 1) = 1;
 
@@ -1495,8 +1537,6 @@ sub get {
 	    $askoff += $block_size;
             $n++;
 	}
-
-        # printf STDERR "queue_size: %d, askoff: %d, bs: %d \r", scalar(@msgid), $askoff, $block_size;
 
 	my $eid = shift @msgid;
 	my $roff = shift @askoff;
@@ -1517,7 +1557,8 @@ sub get {
 	my $len = length $data;
 	
 	if ($roff != $loff or !$len) {
-	    $sftp->_set_error(SFTP_ERR_REMOTE_BLOCK_TOO_SMALL);
+	    $sftp->_set_error(SFTP_ERR_REMOTE_BLOCK_TOO_SMALL,
+                              "remote packet received is too small" );
 	    last;
 	}
 
@@ -1647,6 +1688,7 @@ sub put {
     my $copy_perm = delete $opts{exists $opts{copy_perm} ? 'copy_perm' : 'copy_perms'};
     my $copy_time = delete $opts{copy_time};
     my $overwrite = delete $opts{overwrite};
+    my $resume = delete $opts{resume};
     my $block_size = delete $opts{block_size} || $sftp->{_block_size};
     my $queue_size = delete $opts{queue_size} || $sftp->{_queue_size};
     my $conversion = delete $opts{conversion};
@@ -1689,18 +1731,91 @@ sub put {
 	return undef;
     }
 
-    $perm = $lmode & $numask if $copy_perm;
+    if ($resume and $resume eq 'auto') {
+        undef $resume;
+        if (my $rattrs = $sftp->stat($remote)) {
+            if ($rattrs->mtime >= $lmtime) {
+                $resume = 1;
+            }
+        }
+    }
 
+    $perm = $lmode & $numask if $copy_perm;
     my $attrs = Net::SFTP::Foreign::Attributes->new;
     $attrs->set_perm($perm) if defined $perm;
 
-    my $rfh = $sftp->open($remote,
-			     SSH2_FXF_WRITE | SSH2_FXF_CREAT |
-			     ($overwrite ? SSH2_FXF_TRUNC : SSH2_FXF_EXCL),
-			     $attrs)
-	or return undef;
+    my $rfh;
+    my $readoff = 0;
+    my $converter = _gen_converter $conversion;
+    my $converted_input = '';
 
-    # open does not set the attributes for existant files so we do it again:
+    if ($resume) {
+        if (my $rattrs = $sftp->stat($remote)) {
+            $readoff = $rattrs->size;
+            if ($converter) {
+                # as size could change, we have to read and convert
+                # data until we reach the given position on the local
+                # file:
+                my $off = 0;
+                my $eof_t;
+                while (1) {
+                    my $len = length $converted_input;
+                    my $delta = $readoff - $off;
+                    if ($delta <= $len) {
+                        substr $converted_input, 0, $delta, '';
+                        last;
+                    }
+                    else {
+                        $off += $len;
+                        if ($eof_t) {
+                            $sftp->_set_error(SFTP_ERR_REMOTE_BIGGER_THAN_LOCAL,
+                                              "Couldn't resume transfer, remote file is bigger than local");
+                            return undef;
+                        }
+                        my $read = CORE::read($fh, $converted_input, $block_size * 4);
+                        unless (defined $read) {
+                            $sftp->_set_error(SFTP_ERR_LOCAL_READ_ERROR,
+                                              "Couldn't read from local file '$local'", $!);
+                            return undef;
+                        }
+                        $lsize += $converter->($converted_input);
+                        $read or $eof_t = 1;
+                    }
+                }
+            }
+            else {
+                if ($readoff > $lsize) {
+                    $sftp->_set_error(SFTP_ERR_REMOTE_BIGGER_THAN_LOCAL,
+                                      "Couldn't resume transfer, remote file is bigger than local");
+                    return undef;
+                }
+                unless (CORE::seek($fh, $readoff, 0)) {
+                    $sftp->_set_error(SFTP_ERR_LOCAL_SEEK_FAILED,
+                                      "seek operation on local file failed: $!");
+                    return undef;
+                }
+            }
+            if ($readoff == $lsize) {
+                if (defined $perm and $rattrs->perm != $perm) {
+                    return $sftp->setstat($remote, $attrs);
+                }
+                return 1;
+            }
+            $rfh = $sftp->open($remote, SSH2_FXF_WRITE)
+                or return undef;
+        }
+    }
+
+    unless (defined $rfh) {
+        $rfh = $sftp->open($remote,
+                           SSH2_FXF_WRITE | SSH2_FXF_CREAT |
+                           ($overwrite ? SSH2_FXF_TRUNC : SSH2_FXF_EXCL),
+                           $attrs)
+            or return undef;
+    }
+
+    # in some SFTP server implementations, open does not set the
+    # attributes for existant files so we do it again:
     if (defined $perm) {
         $sftp->fsetstat($rfh, $attrs)
             or return undef;
@@ -1711,12 +1826,7 @@ sub put {
 
     my @msgid;
     my @readoff;
-    my $readoff = 0;
     my $rfno = fileno($sftp->{ssh_in});
-
-    my $converter = _gen_converter $conversion;
-
-    my $converted_input = '';
     my ($eof, $eof_t);
     # when a converter is used the EOF can become delayed by
     # the buffering introduced, we use $eof_t to account for that.
@@ -2107,6 +2217,12 @@ sub rget {
     my $on_error = delete $opts{on_error};
     my $ignore_links = delete $opts{ignore_links};
     my $conversion = delete $opts{conversion};
+    my $resume = delete $opts{resume};
+
+    if ($resume and $conversion) {
+        carp "resume option is useless when data conversion has also been requested";
+        undef $resume;
+    }
 
     # my $relative_links = delete $opts{relative_links};
 
@@ -2197,7 +2313,8 @@ sub rget {
 							block_size => $block_size,
 							copy_perm => $copy_perm,
 							copy_time => $copy_time,
-                                                        conversion => $conversion )) {
+                                                        conversion => $conversion,
+                                                        resume => $resume )) {
 					     $count++;
 					     return undef;
 					 }
@@ -2242,6 +2359,7 @@ sub rput {
     my $on_error = delete $opts{on_error};
     my $ignore_links = delete $opts{ignore_links};
     my $conversion = delete $opts{conversion};
+    my $resume = delete $opts{resume};
 
     # my $relative_links = delete $opts{relative_links};
 
@@ -2339,7 +2457,8 @@ sub rput {
 						       block_size => $block_size,
 						       perm => ($copy_perm ? $e->{a}->perm : 0777) & $mask,
 						       copy_time => $copy_time,
-                                                       conversion => $conversion )) {
+                                                       conversion => $conversion,
+                                                       resume => $resume )) {
 					    $count++;
 					    return undef;
 					}
@@ -2712,7 +2831,7 @@ provided by Net::SSH::Perl.
 Net::SFTP::Foreign supports version 2 of the SSH protocol only.
 
 
-=head2 USAGE
+=head2 Usage
 
 Most of the methods available from this package return undef on
 failure and a true value or the requested data on
@@ -2928,6 +3047,16 @@ that can be concurrently waiting for a server response.
 on the fly data conversion of the file contents can be performed with
 this option. See L</On the fly data conversion> bellow.
 
+=item resume =E<gt> 1 | 'auto'
+
+resumes an interrupted transfer.
+
+If the C<auto> value is given, the transfer will be resumed only when
+the local file is newer than the remote one.
+
+C<get> transfers can not be resumed when a data conversion is in
+place.
+
 =item callback =E<gt> $callback
 
 C<$callback> is a reference to a subroutine that will be called after
@@ -3016,6 +3145,13 @@ that can be concurrently waiting for a server response.
 
 on the fly data conversion of the file contents can be performed with
 this option. See L</On the fly data conversion> bellow.
+
+=item resume =E<gt> 1 | 'auto'
+
+resumes an interrupted transfer.
+
+If the C<auto> value is given, the transfer will be resumed only when
+the remote file is newer than the local one.
 
 =item callback =E<gt> $callback
 
@@ -3372,6 +3508,8 @@ first!).
 
 =item conversion =E<gt> $conversion
 
+=item resume =E<gt> $resume
+
 see docs for C<get> method.
 
 =back
@@ -3437,6 +3575,8 @@ first!).
 =item queue_size =E<gt> $queue_size
 
 =item conversion =E<gt> $conversion
+
+=item resume =E<gt> $resume
 
 see docs C<put> method docs.
 
@@ -3721,7 +3861,7 @@ Also, the subroutine is called one last time with and empty data
 string to indicate that the transfer has finished, so that
 intermediate buffers could be flushed.
 
-Note that when written a conversion subroutine special care has to be
+Note that when writing conversion subroutines, special care has to be
 taken to handle sequences crossing chunk borders.
 
 =back
@@ -3882,11 +4022,11 @@ the SSH process does not terminate by itself in 8 seconds or less.
 
 =back
 
-Support for MS Windows OSs is still experimental!
-
 Support for taint mode is experimental!
 
 Support for plink is experimental!
+
+Support for transfer resuming is experimental!
 
 Support for password/passphrase handling via Expect is also
 experimental. On Windows it only works under the cygwin version of

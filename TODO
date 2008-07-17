@@ -1,0 +1,11 @@
+
+TODO
+====
+
+- 
+
+DONE
+==== 
+
+- add support for unix2dos and dos2unix transformations on the fly for get and put .
+- add support con restarting transfer to put, get and derived methods.

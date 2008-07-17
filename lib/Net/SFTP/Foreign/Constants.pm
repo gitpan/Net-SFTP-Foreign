@@ -105,7 +105,10 @@ BEGIN {
 		      SFTP_ERR_LOCAL_BAD_OBJECT => 41,
 		      SFTP_ERR_REMOTE_ALREADY_EXISTS => 42,
                       # SFTP_ERR_BAD_SSH_BINARY => 43,
-                      SFTP_ERR_ABORTED => 44
+                      SFTP_ERR_ABORTED => 44,
+                      SFTP_ERR_REMOTE_BIGGER_THAN_LOCAL => 45,
+                      SFTP_ERR_LOCAL_BIGGER_THAN_REMOTE => 46,
+                      SFTP_ERR_LOCAL_SEEK_FAILED => 47,
                     );
 
     for my $key (keys %constants) {
