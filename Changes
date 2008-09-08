@@ -1,5 +1,9 @@
 Revision history for Net::SFTP::Foreign
 
+1.43  Sep 8, 2008
+        - readline was slurping the full file contents (bug report by
+          Sylvain Cousineau).
+
 1.42  Jul 17, 2008
         - experimental support for resuming file transfers
         - some typos fixed

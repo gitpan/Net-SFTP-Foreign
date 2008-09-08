@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.42';
+our $VERSION = '1.43';
 
 use strict;
 use warnings;
@@ -1019,7 +1019,8 @@ sub readline {
 	or croak 'Usage: $sftp->readline($fh [, $sep])';
 
     my ($sftp, $rfh, $sep) = @_;
-    if (!defined $sep or length $sep == 0) {
+    $sep = "\n" if @_ < 3;
+    if (!defined $sep or $sep eq '') {
 	$sftp->_fill_read_cache($rfh);
 	$sftp->{_error}
 	    and return undef;
