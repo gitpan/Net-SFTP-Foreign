@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.43';
+our $VERSION = '1.44';
 
 use strict;
 use warnings;
@@ -135,11 +135,11 @@ sub _do_io_unix {
         my $n = select($rv1, $wv1, undef, $timeout);
         if ($n > 0) {
             if (vec($wv1, $fnoout, 1)) {
-                my $written = syswrite($sftp->{ssh_out}, $$bout, 16384);
+                my $written = syswrite($sftp->{ssh_out}, $$bout, 20480);
                 $debug and $debug & 32 and _debug (sprintf "_do_io write queue: %d, syswrite: %s, max: %d",
                                                    length $$bout,
                                                    (defined $written ? $written : 'undef'),
-                                                   16384);
+                                                   20480);
                 unless ($written) {
                     $sftp->_conn_lost;
                     return undef;
@@ -147,7 +147,7 @@ sub _do_io_unix {
                 substr($$bout, 0, $written, '');
             }
             if (vec($rv1, $fnoin, 1)) {
-                my $read = sysread($sftp->{ssh_in}, $sftp->{_bin}, 16384, length($$bin));
+                my $read = sysread($sftp->{ssh_in}, $sftp->{_bin}, 20480, length($$bin));
                 $debug and $debug & 32 and _debug (sprintf "_do_io read sysread: %s, total read: %d",
                                                    (defined $read ? $read : 'undef'),
                                                    length $sftp->{_bin});
@@ -174,7 +174,7 @@ sub _do_io_win {
     my $bout = \$sftp->{_bout};
 
     while (length $$bout) {
-	my $written = syswrite($sftp->{ssh_out}, $$bout, 16384);
+	my $written = syswrite($sftp->{ssh_out}, $$bout, 20480);
 	unless ($written) {
 	    $sftp->_conn_lost;
 	    return undef;
@@ -1835,7 +1835,7 @@ sub put {
         if (!$eof and @msgid < $queue_size) {
             my ($data, $len);
             if ($converter) {
-                if (!$eof_t and length $converted_input < $block_size) {
+                while (!$eof_t and length $converted_input < $block_size) {
                     my $read = CORE::read($fh, my $input, $block_size * 4);
                     unless ($read) {
                         unless (defined $read) {
@@ -1855,7 +1855,7 @@ sub put {
                 $eof = 1 if ($eof_t and !$len);
             }
             else {
-                $len = CORE::read($fh, $data, $block_size * 4);
+                $len = CORE::read($fh, $data, $block_size);
                 unless ($len) {
                     unless (defined $len) {
                         $sftp->_set_error(SFTP_ERR_LOCAL_READ_ERROR,
@@ -4030,7 +4030,7 @@ Support for plink is experimental!
 Support for transfer resuming is experimental!
 
 Support for password/passphrase handling via Expect is also
-experimental. On Windows it only works under the cygwin version of
+experimental. On Windows it only works under the Cygwin version of
 Perl.
 
 To report bugs, please, send me and email or use

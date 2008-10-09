@@ -1,5 +1,10 @@
 Revision history for Net::SFTP::Foreign
 
+1.44  Oct 9, 2008
+        - put was using block sizes 4 times bigger than
+          requested, bug introduced in 1.41 (reported by Hussain
+          Syed).
+
 1.43  Sep 8, 2008
         - readline was slurping the full file contents (bug report by
           Sylvain Cousineau).
