@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.44';
+our $VERSION = '1.45_01';
 
 use strict;
 use warnings;
@@ -130,7 +130,7 @@ sub _do_io_unix {
         my $rv1 = $rv;
         my $wv1 = length($$bout) ? $wv : '';
 
-        $debug and $debug & 32 and _debug("_do_io select(-,-,-, $timeout)");
+        $debug and $debug & 32 and _debug("_do_io select(-,-,-, ". (defined $timeout ? $timeout : 'undef') .")");
 
         my $n = select($rv1, $wv1, undef, $timeout);
         if ($n > 0) {
@@ -278,6 +278,8 @@ sub new {
     $sftp->{_queue_size} = delete $opts{queue_size} || DEFAULT_QUEUE_SIZE;
     $sftp->{_timeout} = delete $opts{timeout};
     $sftp->{_autoflush} = delete $opts{autoflush};
+
+    $sftp->autodisconnect(delete $opts{autodisconnect});
 
     my ($pass, $passphrase, $expect_log_user);
 
@@ -428,15 +430,31 @@ sub new {
     $sftp
 }
 
-sub DESTROY {
+sub autodisconnect {
+    my ($sftp, $ad) = @_;
+    if (defined $ad and $ad != 1) {
+        if ($ad == 0) {
+            $sftp->{_disconnect_by_pid} = -1;
+        }
+        elsif ($ad == 2) {
+            $sftp->{_disconnect_by_pid} = $$;
+        }
+        else {
+            croak "bad value '$ad' for autodisconnect";
+        }
+    }
+    1;
+}
+
+sub disconnect {
     my $sftp = shift;
     my $pid = $sftp->{pid};
 
-    $debug and $debug & 4 and Net::SFTP::Foreign::_debug("$sftp->DESTROY called (ssh pid: ".($pid||'').")");
+    $debug and $debug & 4 and Net::SFTP::Foreign::_debug("$sftp->disconnect called (ssh pid: ".($pid||'').")");
+
+    $sftp->_conn_lost;
 
     if (defined $pid) {
-        local $?;
-        local $!;
         close $sftp->{ssh_out} if (defined $sftp->{ssh_out} and not $sftp->{_ssh_out_is_not_dupped});
         close $sftp->{ssh_in} if defined $sftp->{ssh_in};
         if ($windows) {
@@ -467,6 +485,20 @@ sub DESTROY {
             }
         }
     }
+    1
+}
+
+sub DESTROY {
+    local $?;
+    local $!;
+    local $@;
+
+    my $sftp = shift;
+    my $dbpid = $sftp->{_disconnect_by_pid};
+
+    $debug and $debug & 4 and Net::SFTP::Foreign::_debug("$sftp->DESTROY called (current pid: $$, disconnect_by_pid: ".($dbpid||'').")");
+
+    $sftp->disconnect if (!defined $dbpid or $dbpid == $$);
 }
 
 sub _init {
@@ -2968,6 +3000,38 @@ C<Expect::log_user> method documentation).
 default C<block_size> and C<queue_size> used for read and write
 operations (see the C<put> or C<get> documentation).
 
+=item autodisconnect =E<gt> $ad
+
+By default, the SSH connection is closed from the DESTROY method when
+the object goes out of scope. But on scripts that fork new processes,
+that results on the SSH connection being closed by the first process
+where the object goes out of scope, something undesirable.
+
+This option allows to work-around to some extend that issue.
+
+The acceptable values for C<$ad> are:
+
+=over 4
+
+=item 0
+
+Never try to disconnect this object when exiting from any process.
+
+On most operative systems, the SSH process will exit when the last
+process connected to it ends, but this is not guaranteed.
+
+=item 1
+
+Disconnect on exit from any process. This is the default.
+
+=item 2
+
+Disconnect on exit from the current process only.
+
+=back
+
+See also the disconnect and autodisconnect methods.
+
 =back
 
 =item $sftp-E<gt>error
@@ -3833,7 +3897,26 @@ it. User C<realpath> to normalize it:
 
   $sftp->symlink("foo.lnk" => $sftp->realpath("../bar"))
 
+=item $sftp-E<gt>disconnect
+
+Closes the SSH connection to the remote host. From this point the
+object becomes mostly useless.
+
+Usually, this method is not called explicitly, but implicitly from the
+DESTROY method when the object goes out of scope.
+
+See also the documentation for the C<autodiscconnect> constructor
+argument.
+
+=item $sftp-E<gt>autodisconnect($ad)
+
+Sets the C<autodisconnect> behaviour.
+
+See also the documentation for the C<autodiscconnect> constructor
+argument. The values accepted here are the same as there.
+
 =back
+
 
 =head2 On the fly data conversion
 
@@ -3860,7 +3943,7 @@ perform the conversion.
 
 Also, the subroutine is called one last time with and empty data
 string to indicate that the transfer has finished, so that
-intermediate buffers could be flushed.
+intermediate buffers can be flushed.
 
 Note that when writing conversion subroutines, special care has to be
 taken to handle sequences crossing chunk borders.
@@ -3870,8 +3953,11 @@ taken to handle sequences crossing chunk borders.
 The data conversion is always performed before any other callback
 subroutine is called.
 
-See the Wikipedia discussion on line endings for details about the
-different conventions: L<http://en.wikipedia.org/wiki/Newline>.
+See the Wikipedia entry on line endings
+L<http://en.wikipedia.org/wiki/Newline> and the article
+L<Understanding
+Newlines|http://www.onlamp.com/pub/a/onlamp/2006/08/17/understanding-newlines.html>
+by Xavier Noria for details about the different conventions.
 
 =head1 FAQ
 

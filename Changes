@@ -1,5 +1,10 @@
 Revision history for Net::SFTP::Foreign
 
+1.45_01  Oct 24, 2008
+        - add support for the autodisconnect feature (bug report by
+          Jared Watkins).
+        - add support for multiprocess debugging
+
 1.44  Oct 9, 2008
         - put was using block sizes 4 times bigger than
           requested, bug introduced in 1.41 (reported by Hussain

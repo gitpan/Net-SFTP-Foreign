@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign::Attributes;
 
-our $VERSION = '0.90_01';
+our $VERSION = '1.45';
 
 use strict;
 use warnings;
@@ -212,6 +212,18 @@ returns the value of the gid field or undef if it is not set.
 
 returns the value of the permissions field or undef if it is not set.
 
+See also L<perlfunc/stat> for instructions on how to process the
+returned value with the L<Fcntl> module.
+
+For instance, the following code checks if some attributes object
+corresponds to a directory:
+
+  use Fctnl qw(S_ISDIR);
+  ...
+  if (S_ISDIR($attr->perm)) {
+    # it is a directory!
+  }
+
 =item $attrs-E<gt>atime
 
 returns the value of the atime field or undef if it is not set.
@@ -247,7 +259,7 @@ are undefined values. The flags field is also adjusted.
 
 =head1 COPYRIGHT
 
-Copyright (c) 2006 Salvador FandiE<ntilde>o.
+Copyright (c) 2006-2008 Salvador FandiE<ntilde>o.
 
 All rights reserved.  This program is free software; you can
 redistribute it and/or modify it under the same terms as Perl itself.

@@ -5,7 +5,7 @@ use warnings;
 
 use Test::More;
 
-#$Net::SFTP::Foreign::debug = 2;
+# $Net::SFTP::Foreign::debug = -1;
 
 use lib "./t";
 use common;
