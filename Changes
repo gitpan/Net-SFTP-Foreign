@@ -1,6 +1,8 @@
 Revision history for Net::SFTP::Foreign
 
-1.45_01  Oct 24, 2008
+1.45_02  Oct 28, 2008
+        - add support for extended file attributes (bug report by
+          Oliver Dunbar)
         - add support for the autodisconnect feature (bug report by
           Jared Watkins).
         - add support for multiprocess debugging

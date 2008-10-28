@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign::Attributes;
 
-our $VERSION = '1.45';
+our $VERSION = '1.45_02';
 
 use strict;
 use warnings;
@@ -53,6 +53,12 @@ sub new_from_buffer {
 	$self->{mtime} = $buf->get_int32;
     }
 
+    if ($self->{flags} & SSH2_FILEXFER_ATTR_EXTENDED) {
+        my $n = $buf->get_int32;
+        my @pairs = map $buf->get_str, 1..2*$n;
+        $self->{extended} = \@pairs;
+    }
+
     $self;
 }
 
@@ -72,6 +78,12 @@ sub as_buffer {
     if ($a->{flags} & SSH2_FILEXFER_ATTR_ACMODTIME) {
         $buf->put(int32 => $a->{atime}, int32 => $a->{mtime});
     }
+    if ($a->{flags} & SSH2_FILEXFER_ATTR_EXTENDED) {
+        my $pairs = $a->{extended};
+        $buf->put_int32(int(@$pairs / 2));
+        $buf->put_str($_) for @$pairs;
+    }
+
     $buf;
 }
 
@@ -144,6 +156,33 @@ sub set_amtime {
     }
     else {
 	croak "wrong arguments for set_amtime"
+    }
+}
+
+sub extended { @{shift->{extended} || [] } }
+
+sub set_extended {
+    my $self = shift;
+    @_ & 1 and croak "odd number of arguments passed to set_extended";
+    if (@_) {
+        $self->{flags} |= SSH2_FILEXFER_ATTR_EXTENDED;
+        $self->{extended} = [@_];
+    }
+    else {
+        $self->{flags} &= ~SSH2_FILEXFER_ATTR_EXTENDED;
+        delete $self->{extended};
+    }
+}
+
+sub append_extended {
+    my $self = shift;
+    @_ & 1 and croak "odd number of arguments passed to append_extended";
+    my $pairs = $self->{extended};
+    if (@$pairs) {
+        push @$pairs, @_;
+    }
+    else {
+        $self->set_extended(@_);
     }
 }
 
@@ -232,6 +271,10 @@ returns the value of the atime field or undef if it is not set.
 
 returns the value of the mtime field or undef if it is not set.
 
+=item %extended = $attr-E<gt>extended
+
+returns the vendor-dependent extended attributes
+
 =item $attrs-E<gt>set_size($size)
 
 sets the value of the size field, or if $size is undef removes the
@@ -254,6 +297,14 @@ same bit on the flags field and so both have to be set or not.
 
 sets the values of the atime and mtime fields or remove them if they
 are undefined values. The flags field is also adjusted.
+
+=item $attr-E<gt>set_extended(%extended)
+
+sets the vendor-dependent extended attributes
+
+=item $attr-E<gt>append_extended(%more_extended)
+
+adds more pairs to the list of vendor-dependent extended attributes
 
 =back
 

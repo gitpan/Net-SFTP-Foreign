@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.45_01';
+our $VERSION = '1.45_02';
 
 use strict;
 use warnings;
@@ -278,6 +278,7 @@ sub new {
     $sftp->{_queue_size} = delete $opts{queue_size} || DEFAULT_QUEUE_SIZE;
     $sftp->{_timeout} = delete $opts{timeout};
     $sftp->{_autoflush} = delete $opts{autoflush};
+    $sftp->{_late_set_perm} = delete $opts{late_set_perm};
 
     $sftp->autodisconnect(delete $opts{autodisconnect});
 
@@ -1725,6 +1726,8 @@ sub put {
     my $block_size = delete $opts{block_size} || $sftp->{_block_size};
     my $queue_size = delete $opts{queue_size} || $sftp->{_queue_size};
     my $conversion = delete $opts{conversion};
+    my $late_set_perm = delete $opts{late_set_perm};
+    $late_set_perm = $sftp->{_late_set_perm} unless defined $late_set_perm;
 
     %opts and croak "invalid option(s) '".CORE::join("', '", keys %opts)."'";
 
@@ -1847,9 +1850,10 @@ sub put {
             or return undef;
     }
 
-    # in some SFTP server implementations, open does not set the
-    # attributes for existant files so we do it again:
-    if (defined $perm) {
+    # In some SFTP server implementations, open does not set the
+    # attributes for existant files so we do it again.  Also, some SFTP
+    # servers do not support changing permissions on open files
+    if (defined $perm and !$late_set_perm) {
         $sftp->fsetstat($rfh, $attrs)
             or return undef;
     }
@@ -1942,6 +1946,12 @@ sub put {
     $sftp->_close_save_status($rfh);
 
     return undef if $sftp->error;
+
+    # for servers that does not support setting permissions on open files
+    if (defined $perm and $late_set_perm) {
+        $sftp->fsetstat($rfh, $attrs)
+            or return undef;
+    }
 
     if ($copy_time) {
 	$attrs = Net::SFTP::Foreign::Attributes->new;
@@ -2393,6 +2403,7 @@ sub rput {
     my $ignore_links = delete $opts{ignore_links};
     my $conversion = delete $opts{conversion};
     my $resume = delete $opts{resume};
+    my $late_set_perm = delete $opts{late_set_perm};
 
     # my $relative_links = delete $opts{relative_links};
 
@@ -2491,7 +2502,8 @@ sub rput {
 						       perm => ($copy_perm ? $e->{a}->perm : 0777) & $mask,
 						       copy_time => $copy_time,
                                                        conversion => $conversion,
-                                                       resume => $resume )) {
+                                                       resume => $resume,
+                                                       late_set_perm => $late_set_perm )) {
 					    $count++;
 					    return undef;
 					}
@@ -3007,7 +3019,7 @@ the object goes out of scope. But on scripts that fork new processes,
 that results on the SSH connection being closed by the first process
 where the object goes out of scope, something undesirable.
 
-This option allows to work-around to some extend that issue.
+This option allows to work-around this issue to some extend.
 
 The acceptable values for C<$ad> are:
 
@@ -3031,6 +3043,10 @@ Disconnect on exit from the current process only.
 =back
 
 See also the disconnect and autodisconnect methods.
+
+=item late_set_perm =E<gt> $bool
+
+See the FAQ below.
 
 =back
 
@@ -3241,6 +3257,9 @@ progress meters, etc.
 The C<abort> method can be called from inside the callback to abort
 the transfer.
 
+=item late_set_perm =E<gt> $bool
+
+See the FAQ below.
 
 =back
 
@@ -3575,7 +3594,7 @@ first!).
 
 =item resume =E<gt> $resume
 
-see docs for C<get> method.
+See C<get> method docs.
 
 =back
 
@@ -3643,8 +3662,9 @@ first!).
 
 =item resume =E<gt> $resume
 
-see docs C<put> method docs.
+=item late_set_perm =E<gt> $bool
 
+see C<put> method docs.
 
 =back
 
@@ -4082,6 +4102,27 @@ L<PuTTY|http://the.earth.li/~sgtatham/putty/> SSH client. Very popular
 between MS Windows users, it is also available for Linux and other
 Unixes now.
 
+=item put method fails
+
+B<Q>: put fails with the following error:
+
+  Couldn't setstat remote file (fsetstat): The requested operation
+    cannot be performed because there is a file transfer in progress.
+
+B<A>: Try passing the C<late_set_perm> option to the put method:
+
+  $sftp->put($local, $remote, late_set_perm => 1)
+     or die "unable to transfer file: " . $sftp->error;
+
+Some servers do not support the C<fsetstat> method on open file
+handles. Setting this flag allows to delay that operation until the
+file has been completely transferred and the remote file handle
+closed.
+
+Send me a bug report containing a dump of your $sftp object so I
+can add code for your particular server software to activate the
+work-around automatically.
+
 =back
 
 =head1 BUGS
@@ -4109,9 +4150,11 @@ the SSH process does not terminate by itself in 8 seconds or less.
 
 =back
 
-Support for taint mode is experimental!
+Support for on-the-fly data conversion is experimental!
 
-Support for plink is experimental!
+Support for autoclose feature is experimental!
+
+Support for late_set_perm is experimental!
 
 Support for transfer resuming is experimental!
 
