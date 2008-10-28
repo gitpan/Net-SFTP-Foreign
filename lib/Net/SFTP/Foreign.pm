@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.45_02';
+our $VERSION = '1.45_03';
 
 use strict;
 use warnings;
@@ -1949,7 +1949,7 @@ sub put {
 
     # for servers that does not support setting permissions on open files
     if (defined $perm and $late_set_perm) {
-        $sftp->fsetstat($rfh, $attrs)
+        $sftp->setstat($remote, $attrs)
             or return undef;
     }
 
