@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.45_03';
+our $VERSION = '1.45_04';
 
 use strict;
 use warnings;
@@ -252,6 +252,13 @@ sub _ipc_open2_bug_workaround {
     }
 }
 
+sub _croak_bad_options {
+    if (@_) {
+        my $s = (@_ > 1 ? 's' : '');
+        croak "Invalid option$s '" . CORE::join("', '", @_) . "' or bad combination of options";
+    }
+}
+
 sub new {
     ${^TAINT} and &_catch_tainted_args;
 
@@ -341,8 +348,7 @@ sub new {
         }
     }
 
-    croak "invalid option(s) '".CORE::join("', '", keys %opts)."' or bad combination"
-                                           if %opts;
+    %opts and _croak_bad_options(keys %opts);
 
     if (defined $transport) {
         if (ref $transport eq 'ARRAY') {
@@ -1164,12 +1170,40 @@ sub mkdir {
     ${^TAINT} and &_catch_tainted_args;
 
     my ($sftp, $path, $attrs) = @_;
-    $path = $sftp->_rel2abs($path);
     $attrs = _empty_attributes unless defined $attrs;
+    $path = $sftp->_rel2abs($path);
     my $id = $sftp->_queue_str_request(SSH2_FXP_MKDIR, $path, $attrs);
     return $sftp->_check_status_ok($id,
                                    SFTP_ERR_REMOTE_MKDIR_FAILED,
                                    "Couldn't create remote directory");
+}
+
+sub _normalize_path {
+    my $path = shift;
+    $path =~ s|/\./|/|g;
+    $path =~ s|//+|/|g;
+    $path =~ s|^\./||;
+    $path;
+}
+
+sub mkpath {
+    (@_ >= 2 and @_ <= 3)
+        or croak 'Usage: $sftp->mkpath($path [, $attrs])';
+    ${^TAINT} and &_catch_tainted_args;
+
+    my ($sftp, $path, $attrs) = @_;
+    $path = _normalize_path($sftp->_rel2abs($path));
+
+    my $start = '';
+    my @parts = grep length, split /\/+/, $path;
+    for my $part (@parts) {
+        $start .= "/$part";
+        unless ($sftp->test_d($start)) {
+            $sftp->mkdir($start, $attrs)
+                or return undef;
+        }
+    }
+    1;
 }
 
 sub setstat {
@@ -1416,7 +1450,7 @@ sub get {
 
     my $oldumask = umask;
 
-    %opts and croak "invalid option(s) '".CORE::join("', '", keys %opts)."'";
+    %opts and _croak_bad_options(keys %opts);
 
     croak "'perm' and 'umask' options can not be used simultaneously"
 	if (defined $perm and defined $umask);
@@ -1729,7 +1763,7 @@ sub put {
     my $late_set_perm = delete $opts{late_set_perm};
     $late_set_perm = $sftp->{_late_set_perm} unless defined $late_set_perm;
 
-    %opts and croak "invalid option(s) '".CORE::join("', '", keys %opts)."'";
+    %opts and _croak_bad_options(keys %opts);
 
     croak "'perm' and 'umask' options can not be used simultaneously"
 	if (defined $perm and defined $umask);
@@ -1979,7 +2013,7 @@ sub ls {
 	_gen_wanted(delete $opts{wanted},
 		    delete $opts{no_wanted});
 
-    %opts and croak "invalid option(s) '".CORE::join("', '", keys %opts)."'";
+    %opts and _croak_bad_options(keys %opts);
 
     $dir = '.' unless defined $dir;
     $dir = $sftp->_rel2abs($dir);
@@ -2079,10 +2113,7 @@ sub join {
 	    }
 	}
     }
-    $a =~ s|/\./|/|g;
-    $a =~ s|^\./||;
-    $a =~ s|//+|/|g;
-    $a;
+    _normalize_path($a);
 }
 
 sub glob {
@@ -2103,7 +2134,7 @@ sub glob {
     my $strict_leading_dot =
 	exists $opts{strict_leading_dot} ? delete $opts{strict_leading_dot} : 1;
 
-    %opts and croak "invalid option(s) '".CORE::join("', '", keys %opts)."'";
+    %opts and _croak_bad_options(keys %opts);
 
     my $wantarray = wantarray;
 
@@ -2200,7 +2231,7 @@ sub rremove {
     my $wanted = _gen_wanted( delete $opts{wanted},
 			      delete $opts{no_wanted});
 
-    %opts and croak "invalid option(s) '".CORE::join("', '", keys %opts)."'";
+    %opts and _croak_bad_options(keys %opts);
 
     my $count = 0;
 
@@ -2272,7 +2303,7 @@ sub rget {
     my $wanted = _gen_wanted( delete $opts{wanted},
 			      delete $opts{no_wanted} );
 
-    %opts and croak "invalid option(s) '".CORE::join("', '", keys %opts)."'";
+    %opts and _croak_bad_options(keys %opts);
 
     $remote = $sftp->join($remote, './');
     my $qremote = quotemeta $remote;
@@ -2410,7 +2441,7 @@ sub rput {
     my $wanted = _gen_wanted( delete $opts{wanted},
 			      delete $opts{no_wanted} );
 
-    %opts and croak "invalid option(s) '".CORE::join("', '", keys %opts)."'";
+    %opts and _croak_bad_options(keys %opts);
 
     require Net::SFTP::Foreign::Local;
     my $lfs = Net::SFTP::Foreign::Local->new;
@@ -3881,6 +3912,13 @@ whose attributes are initialized to C<$attrs> (a
 L<Net::SFTP::Foreign::Attributes> object) if given.
 
 Returns a true value on success and undef on failure.
+
+=item $sftp-E<gt>mkpath($path)
+
+=item $sftp-E<gt>mkpath($path, $attrs)
+
+This method is similar to C<mkdir> but also creates any non-existant
+parent directories recursively.
 
 =item $sftp-E<gt>rmdir($path)
 

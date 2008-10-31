@@ -1,6 +1,8 @@
 Revision history for Net::SFTP::Foreign
 
-1.45_03  Oct 28, 2008
+
+1.45_04  Oct 28, 2008
+        - add support for mkpath (feature requested by Mark Murphy)
         - add support for late_set_attr (bug report by Oliver Dunbar)
         - add support for extended file attributes (bug report by
           Oliver Dunbar)
