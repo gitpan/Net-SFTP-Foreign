@@ -2,10 +2,15 @@
 TODO
 ====
 
+- add support for new extension methods available from late OpenSSH
+  SFTP server
+
 - add support for capture_stderr option in constructor
+
 
 DONE
 ==== 
 
 - add support for unix2dos and dos2unix transformations on the fly for get and put .
+
 - add support con restarting transfer to put, get and derived methods.

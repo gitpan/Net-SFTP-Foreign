@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.45_04';
+our $VERSION = '1.45_05';
 
 use strict;
 use warnings;
@@ -11,7 +11,7 @@ use IPC::Open2;
 use Symbol ();
 use Errno ();
 use Scalar::Util;
-
+use Encode ();
 our $debug;
 our $dirty_cleanup;
 my $windows;
@@ -259,6 +259,16 @@ sub _croak_bad_options {
     }
 }
 
+sub _fs_encode {
+    my ($sftp, $path) = @_;
+    Encode::encode($sftp->{_fs_encoding}, $path);
+}
+
+sub _fs_decode {
+    my ($sftp, $path) = @_;
+    Encode::decode($sftp->{_fs_encoding}, $path);
+}
+
 sub new {
     ${^TAINT} and &_catch_tainted_args;
 
@@ -286,6 +296,10 @@ sub new {
     $sftp->{_timeout} = delete $opts{timeout};
     $sftp->{_autoflush} = delete $opts{autoflush};
     $sftp->{_late_set_perm} = delete $opts{late_set_perm};
+    $sftp->{_fs_encoding} = delete $opts{fs_encoding};
+
+    $sftp->{_fs_encoding} = 'utf8'
+        unless defined $sftp->{_fs_encoding};
 
     $sftp->autodisconnect(delete $opts{autodisconnect});
 
@@ -425,8 +439,9 @@ sub new {
                 return $sftp;
             }
         }
-        unless ($windows) {
-            for my $dir (qw(ssh_in ssh_out)) {
+        for my $dir (qw(ssh_in ssh_out)) {
+            binmode $sftp->{$dir};
+            unless ($windows) {
                 my $flags = fcntl($sftp->{$dir}, F_GETFL, 0);
                 fcntl($sftp->{$dir}, F_SETFL, $flags | O_NONBLOCK);
             }
@@ -568,7 +583,7 @@ sub _get_msg_and_check {
 	if ($type != $etype) {
 	    if ($type == SSH2_FXP_STATUS) {
                 my $code = $msg->get_int32;
-                my $str = $msg->get_str;
+                my $str = Encode::decode(utf8 => $msg->get_str);
 		my $status = $sftp->_set_status($code, (defined $str ? $str : ()));
 		$sftp->_set_error($err, $errstr, $status);
 	    }
@@ -688,8 +703,9 @@ sub open {
     $path = $sftp->_rel2abs($path);
     defined $flags or $flags = SSH2_FXF_READ;
     defined $a or $a = Net::SFTP::Foreign::Attributes->new;
-    my $id = $sftp->_queue_new_msg(SSH2_FXP_OPEN, str => $path,
-				  int32 => $flags, attr => $a);
+    my $id = $sftp->_queue_new_msg(SSH2_FXP_OPEN,
+                                   str => $sftp->_fs_encode($path),
+                                   int32 => $flags, attr => $a);
 
     my $rid = $sftp->_get_handle($id,
 				SFTP_ERR_REMOTE_OPEN_FAILED,
@@ -718,9 +734,8 @@ sub opendir {
 
     my $sftp = shift;
     my $path = shift;
-    my $abspath = $sftp->_rel2abs($path);
-    my $id = $sftp->_queue_str_request(SSH2_FXP_OPENDIR, $abspath, @_);
-
+    $path = $sftp->_rel2abs($path);
+    my $id = $sftp->_queue_str_request(SSH2_FXP_OPENDIR, $sftp->_fs_encode($path), @_);
     my $rid = $sftp->_get_handle($id, SFTP_ERR_REMOTE_OPENDIR_FAILED,
 				 "Couldn't open remote dir '$path'");
 
@@ -767,12 +782,13 @@ sub sftpread {
 sub sftpwrite {
     @_ == 4 or croak 'Usage: $sftp->sftpwrite($fh, $offset, $data)';
 
-    my ($sftp, $rfh, $offset, $data) = @_;
+    my ($sftp, $rfh, $offset) = @_;
     my $rfid = $sftp->_rfid($rfh);
     defined $rfid or return undef;
+    utf8::is_utf8($_[3]) and croak "sftpwrite can not handle UTF8 data";
 
     my $id = $sftp->_queue_new_msg(SSH2_FXP_WRITE, str => $rfid,
-				  int64 => $offset, str => $data);
+				  int64 => $offset, str => $_[3]);
 
     if ($sftp->_check_status_ok($id,
 				SFTP_ERR_REMOTE_WRITE_FAILED,
@@ -880,8 +896,8 @@ sub write {
     my ($sftp, $rfh) = @_;
     $sftp->flush($rfh, 'in') or return undef;
 
+    utf8::is_utf8($_[2]) and croak "write method can not handle UTf8 data";
     my $datalen = length $_[2];
-
     my $bout = $rfh->_bout;
     $$bout .= $_[2];
     my $len = length $$bout;
@@ -1101,7 +1117,7 @@ sub _gen_stat_method {
 
 	my ($sftp, $path) = @_;
         $path = $sftp->_rel2abs($path);
-	my $id = $sftp->_queue_str_request($code, $path);
+	my $id = $sftp->_queue_str_request($code, $sftp->_fs_encode($path));
 	if (my $msg = $sftp->_get_msg_and_check(SSH2_FXP_ATTRS, $id,
 						$error, $errstr)) {
 	    return $msg->get_attributes;
@@ -1147,7 +1163,7 @@ sub _gen_remove_method {
 
         my ($sftp, $path) = @_;
         $path = $sftp->_rel2abs($path);
-        my $id = $sftp->_queue_str_request($code, $path);
+        my $id = $sftp->_queue_str_request($code, $sftp->_fs_encode($path));
         return $sftp->_check_status_ok($id, $error, $errstr);
     };
 }
@@ -1172,7 +1188,9 @@ sub mkdir {
     my ($sftp, $path, $attrs) = @_;
     $attrs = _empty_attributes unless defined $attrs;
     $path = $sftp->_rel2abs($path);
-    my $id = $sftp->_queue_str_request(SSH2_FXP_MKDIR, $path, $attrs);
+    my $id = $sftp->_queue_str_request(SSH2_FXP_MKDIR,
+                                       $sftp->_fs_encode($path),
+                                       $attrs);
     return $sftp->_check_status_ok($id,
                                    SFTP_ERR_REMOTE_MKDIR_FAILED,
                                    "Couldn't create remote directory");
@@ -1212,7 +1230,9 @@ sub setstat {
 
     my ($sftp, $path, $attrs) = @_;
     $path = $sftp->_rel2abs($path);
-    my $id = $sftp->_queue_str_request(SSH2_FXP_SETSTAT, $path, $attrs);
+    my $id = $sftp->_queue_str_request(SSH2_FXP_SETSTAT,
+                                       $sftp->_fs_encode($path),
+                                       $attrs);
     return $sftp->_check_status_ok($id,
                                    SFTP_ERR_REMOTE_SETSTAT_FAILED,
                                    "Couldn't setstat remote file (setstat)'");
@@ -1301,8 +1321,8 @@ sub readdir {
 	    my $count = $msg->get_int32 or last;
 
 	    for (1..$count) {
-		push @$cache, { filename => $msg->get_str,
-				longname => $msg->get_str,
+		push @$cache, { filename => $sftp->_fs_decode($msg->get_str),
+				longname => $sftp->_fs_decode($msg->get_str),
 				a => $msg->get_attributes };
 	    }
 	}
@@ -1341,13 +1361,13 @@ sub _gen_getpath_method {
 
 	my ($sftp, $path) = @_;
 	$path = $sftp->_rel2abs($path);
-	my $id = $sftp->_queue_str_request($code, $path);
+	my $id = $sftp->_queue_str_request($code, $sftp->_fs_encode($path));
 
 	if (my $msg = $sftp->_get_msg_and_check(SSH2_FXP_NAME, $id,
 						$error,
 						"Couldn't get $name for remote '$path'")) {
 	    $msg->get_int32 > 0
-		and return $msg->get_str;
+		and return $sftp->_fs_decode($msg->get_str);
 
 	    $sftp->_set_error($error,
 			      "Couldn't get $name for remote '$path', no names on reply")
@@ -1376,8 +1396,8 @@ sub rename {
     $old = $sftp->_rel2abs($old);
     $new = $sftp->_rel2abs($new);
     my $id = $sftp->_queue_new_msg(SSH2_FXP_RENAME,
-				  str => $old,
-				  str => $new);
+                                   str => $sftp->_fs_encode($old),
+                                   str => $sftp->_fs_encode($new));
 
     return $sftp->_check_status_ok($id, SFTP_ERR_REMOTE_RENAME_FAILED,
 				   "Couldn't rename remote file '$old' to '$new'");
@@ -1392,8 +1412,8 @@ sub symlink {
     my ($sftp, $sl, $target) = @_;
     $sl = $sftp->_rel2abs($sl);
     my $id = $sftp->_queue_new_msg(SSH2_FXP_SYMLINK,
-				  str => $target,
-				  str => $sl);
+                                   str => $sftp->_fs_encode($target),
+                                   str => $sftp->_fs_encode($sl));
 
     return $sftp->_check_status_ok($id, SFTP_ERR_REMOTE_SYMLINK_FAILED,
 				   "Couldn't create symlink '$sl' pointing to '$target'");
@@ -1849,6 +1869,7 @@ sub put {
                             return undef;
                         }
                         $lsize += $converter->($converted_input);
+                        utf8::is_utf8($converted_input) and croak "put converter introduced UTF8 data";
                         $read or $eof_t = 1;
                     }
                 }
@@ -1918,6 +1939,7 @@ sub put {
                     # the last time the $converter call is
                     # performed it receives an empty string
                     $lsize += $converter->($input);
+                    utf8::is_utf8($input) and croak "put converter introduced UTF8 data";
                     $converted_input .= $input;
                 }
                 $data = substr($converted_input, 0, $block_size, '');
@@ -1943,6 +1965,8 @@ sub put {
                 $cb->($sftp, $data, $readoff, $lsize);
 
                 last OK if $sftp->error;
+
+                utf8::is_utf8($data) and croak "put callback introduced UTF8 data";
 
                 $len = length $data;
                 $nextoff = $readoff + $len;
@@ -2035,8 +2059,8 @@ sub ls {
 	    my $count = $msg->get_int32 or last;
 
 	    for (1..$count) {
-                my $fn = $msg->get_str;
-                my $ln = $msg->get_str;
+                my $fn = $sftp->_fs_decode($msg->get_str);
+                my $ln = $sftp->_fs_decode($msg->get_str); # 
                 my $a = $msg->get_attributes;
 
 		my $entry =  { filename => $fn,
@@ -2967,14 +2991,6 @@ to an array of arguments. For instance:
   more => "-i $key"    # WRONG!!!
   more => [-i => $key] # RIGHT
 
-=item ssh_cmd =E<gt> $sshcmd
-
-name of the external SSH client. By default C<ssh> is used.
-
-For instance:
-
-  my $sftp = Net::SFTP::Foreign->new($host, ssh_cmd => 'plink');
-
 =item ssh_cmd_interface =E<gt> 'plink' or 'ssh'
 
 declares the command line interface that the SSH client used to
@@ -2983,14 +2999,6 @@ are supported.
 
 This option would be rarely required as the module infers the
 interface from the SSH command name.
-
-=item open2_cmd =E<gt> [@cmd]
-
-=item open2_cmd =E<gt> $cmd;
-
-allows to completely redefine how C<ssh> is called. Its arguments are
-passed to L<IPC::Open2::open2> to open a pipe to the remote
-server.
 
 =item autoflush =E<gt> $bool
 
@@ -3006,6 +3014,44 @@ command to complete.
 
 When the timeout expires, the current method is aborted and
 the SFTP connection becomes invalid.
+
+=item fs_encoding =E<gt> $encoding
+
+Version 3 of the SFTP protocol implemented by this package knows
+nothing about the character encoding used on the remote filesystem
+structure (file and directory names).
+
+This option allows to select the encoding used in the remote
+machine. The default value is C<utf8>.
+
+For instance:
+
+  $sftp = Net::SFTP::Foreign->new('user@host', fs_encoding => latin1);
+
+will convert any path name passed to any method in this package to its
+C<latin1> representation before sending it to the remote side.
+
+Note that this option will not affect file contents in any way.
+
+=item password =E<gt> $password
+
+=item passphrase =E<gt> $passphrase
+
+uses L<Expect> to handle password authentication or keys requiring a
+passphrase. This is an experimental feature!
+
+=item expect_log_user =E<gt> $bool
+
+activates password/passphrase authentication interaction logging (see
+C<Expect::log_user> method documentation).
+
+=item ssh_cmd =E<gt> $sshcmd
+
+name of the external SSH client. By default C<ssh> is used.
+
+For instance:
+
+  my $sftp = Net::SFTP::Foreign->new($host, ssh_cmd => 'plink');
 
 =item transport =E<gt> $fh
 
@@ -3024,17 +3070,13 @@ not cause the process at the other side to exit. The additional
 C<$pid> argument can be used to instruct this module to kill that
 process if it doesn't exit by itself.
 
-=item password =E<gt> $password
+=item open2_cmd =E<gt> [@cmd]
 
-=item passphrase =E<gt> $passphrase
+=item open2_cmd =E<gt> $cmd;
 
-uses L<Expect> to handle password authentication or keys requiring a
-passphrase. This is an experimental feature!
-
-=item expect_log_user =E<gt> $bool
-
-activates password/passphrase authentication interaction logging (see
-C<Expect::log_user> method documentation).
+allows to completely redefine how C<ssh> is called. Its arguments are
+passed to L<IPC::Open2::open2> to open a pipe to the remote
+server.
 
 =item block_size =E<gt> $default_block_size
 
@@ -3395,9 +3437,9 @@ makes the method return a simple array containing the file names from
 the remote directory only. For instance, these two sentences are
 equivalent:
 
-  my $ls1 = $sftp->ls('.', names_only => 1);
+  my @ls1 = @{ $sftp->ls('.', names_only => 1) };
 
-  my $ls2 = map { $_->{filename} } $sftp->ls('.');
+  my @ls2 = map { $_->{filename} } @{$sftp->ls('.')};
 
 =back
 
@@ -3960,8 +4002,8 @@ it. User C<realpath> to normalize it:
 Closes the SSH connection to the remote host. From this point the
 object becomes mostly useless.
 
-Usually, this method is not called explicitly, but implicitly from the
-DESTROY method when the object goes out of scope.
+Usually, this method should not be called explicitly, but implicitly
+from the DESTROY method when the object goes out of scope.
 
 See also the documentation for the C<autodiscconnect> constructor
 argument.
@@ -4012,7 +4054,7 @@ The data conversion is always performed before any other callback
 subroutine is called.
 
 See the Wikipedia entry on line endings
-L<http://en.wikipedia.org/wiki/Newline> and the article
+L<http://en.wikipedia.org/wiki/Newline> or the article
 L<Understanding
 Newlines|http://www.onlamp.com/pub/a/onlamp/2006/08/17/understanding-newlines.html>
 by Xavier Noria for details about the different conventions.
@@ -4187,6 +4229,8 @@ From version 0.90_18 upwards, a dirty cleanup is performed anyway when
 the SSH process does not terminate by itself in 8 seconds or less.
 
 =back
+
+Support for filesystem encodings is experimental!
 
 Support for on-the-fly data conversion is experimental!
 

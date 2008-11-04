@@ -95,7 +95,10 @@ sub put_int64 {
     }
 }
 
-sub put_str { ${$_[0]} .= pack(N => length($_[1])) . $_[1] }
+sub put_str {
+    utf8::is_utf8($_[1]) and croak "UTF8 data reached the SFTP buffer";
+    ${$_[0]} .= pack(N => length($_[1])) . $_[1]
+}
 
 sub put_char { ${$_[0]} .= $_[1] }
 

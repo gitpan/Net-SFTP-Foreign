@@ -1,7 +1,14 @@
 Revision history for Net::SFTP::Foreign
 
 
-1.45_04  Oct 28, 2008
+1.45_05  Nov 4, 2008
+        - new fs_encoding feature added ***this is a mayor internal
+          change that could introduce new bugs***
+        - when parsing status msgs, the string was not being converted
+          to utf8
+        - croak when utf8 data is written to remote files in any way.
+        - binmode ssh_in and ssh_out
+        - some minor documentation corrections
         - add support for mkpath (feature requested by Mark Murphy)
         - add support for late_set_attr (bug report by Oliver Dunbar)
         - add support for extended file attributes (bug report by
