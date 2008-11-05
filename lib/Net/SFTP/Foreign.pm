@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.45_05';
+our $VERSION = '1.45_06';
 
 use strict;
 use warnings;
@@ -533,8 +533,6 @@ sub _init {
 	if ($type == SSH2_FXP_VERSION) {
 	    my $version = $msg->get_int32;
 
-	    ## XXX Check for extensions.
-
 	    $sftp->{server_version} = $version;
             $sftp->{server_extensions} = {};
             while (length $$msg) {
@@ -550,6 +548,18 @@ sub _init {
 			  SFTP_ERR_REMOTE_BAD_MESSAGE,
 			  "bad packet type, expecting SSH2_FXP_VERSION, got $type");
     }
+    return undef;
+}
+
+sub server_extensions { %{shift->{server_extensions}} }
+
+sub _check_extension {
+    my ($sftp, $name, $version, $error, $errstr) = @_;
+    my $ext = $sftp->{server_extensions}{$name};
+    return 1 if (defined $ext and $ext == $version);
+
+    $sftp->_set_status(SSH2_FX_OP_UNSUPPORTED);
+    $sftp->_set_error($error, "$errstr: extended operation not supported by server");
     return undef;
 }
 
@@ -607,8 +617,6 @@ sub _get_handle {
     }
     return undef;
 }
-
-## Client -> server methods
 
 sub _rid {
     my ($sftp, $rfh) = @_;
@@ -1138,7 +1146,7 @@ sub _gen_stat_method {
 			 "Couldn't stat remote file (stat)");
 
 sub fstat {
-    @_ == 2 or croak 'Usage: $sftp->fstat($path)';
+    @_ == 2 or croak 'Usage: $sftp->fstat($fh)';
     ${^TAINT} and &_catch_tainted_args;
 
     my $sftp = shift;
@@ -1388,19 +1396,74 @@ sub _gen_getpath_method {
 
 ## SSH2_FXP_RENAME (18)
 # true on success, undef on failure
-sub rename {
-    @_ == 3 or croak 'Usage: $sftp->rename($old, $new)';
-    ${^TAINT} and &_catch_tainted_args;
 
+sub _rename {
     my ($sftp, $old, $new) = @_;
+
     $old = $sftp->_rel2abs($old);
     $new = $sftp->_rel2abs($new);
+
     my $id = $sftp->_queue_new_msg(SSH2_FXP_RENAME,
                                    str => $sftp->_fs_encode($old),
                                    str => $sftp->_fs_encode($new));
 
-    return $sftp->_check_status_ok($id, SFTP_ERR_REMOTE_RENAME_FAILED,
-				   "Couldn't rename remote file '$old' to '$new'");
+    $sftp->_check_status_ok($id, SFTP_ERR_REMOTE_RENAME_FAILED,
+                            "Couldn't rename remote file '$old' to '$new'");
+}
+
+sub rename {
+    (@_ & 1) or croak 'Usage: $sftp->rename($old, $new, %opts)';
+    ${^TAINT} and &_catch_tainted_args;
+
+    my ($sftp, $old, $new, %opts) = @_;
+
+    my $overwrite = delete $opts{overwrite};
+    %opts and _croak_bad_options(keys %opts);
+
+    if ($overwrite) {
+        $sftp->atomic_rename($old, $new) and return 1;
+        $sftp->status != SSH2_FX_OP_UNSUPPORTED and return undef;
+    }
+
+    # we are optimistic and try to rename it whitout testing if a file
+    # of the same name already exists
+    $sftp->_rename($old, $new) and return 1;
+
+    if ($overwrite and $sftp->status == SSH2_FX_FAILURE) {
+        if ($sftp->realpath($old) eq $sftp->realpath($new)) {
+            $sftp->_set_status(SSH2_FX_FAILURE);
+            $sftp->_set_error(SFTP_ERR_REMOTE_RENAME_FAILED,
+                             "Couldn't rename, both '$old' and '$new' point to the same file");
+            return undef;
+        }
+
+        $sftp->remove($new);
+        return $sftp->_rename($old, $new);
+    }
+    return undef;
+}
+
+sub atomic_rename {
+    @_ == 3 or croak 'Usage: $sftp->atomic_rename($old, $new)';
+    ${^TAINT} and &_catch_tainted_args;
+
+    my ($sftp, $old, $new) = @_;
+
+    $sftp->_check_extension('posix-rename@openssh.com' => 1,
+                            SFTP_ERR_REMOTE_FSTATVFS_FAILED,
+                            "fstatvfs failed")
+        or return undef;
+
+    $old = $sftp->_rel2abs($old);
+    $new = $sftp->_rel2abs($new);
+
+    my $id = $sftp->_queue_new_msg(SSH2_FXP_EXTENDED,
+                                   str => 'posix-rename@openssh.com',
+                                   str => $sftp->_fs_encode($old),
+                                   str => $sftp->_fs_encode($new));
+
+    $sftp->_check_status_ok($id, SFTP_ERR_REMOTE_RENAME_FAILED,
+                            "Couldn't rename remote file '$old' to '$new'");
 }
 
 ## SSH2_FXP_SYMLINK (20)
@@ -1415,8 +1478,8 @@ sub symlink {
                                    str => $sftp->_fs_encode($target),
                                    str => $sftp->_fs_encode($sl));
 
-    return $sftp->_check_status_ok($id, SFTP_ERR_REMOTE_SYMLINK_FAILED,
-				   "Couldn't create symlink '$sl' pointing to '$target'");
+    $sftp->_check_status_ok($id, SFTP_ERR_REMOTE_SYMLINK_FAILED,
+                            "Couldn't create symlink '$sl' pointing to '$target'");
 }
 
 sub _gen_save_status_method {
@@ -2583,6 +2646,56 @@ sub rput {
 		} );
 
     return $count;
+}
+sub _get_statvfs {
+    my ($sftp, $eid, $error, $errstr) = @_;
+    if (my $msg = $sftp->_get_msg_and_check(SSH2_FXP_EXTENDED_REPLY,
+                                            $eid, $error, $errstr)) {
+        printf STDERR "msg length: %i\n", length $$msg;
+        my %statvfs = map { $_ => $msg->get_int64 } qw(bsize frsize blocks
+                                                       bfree bavail files ffree
+                                                       favail fsid flag namemax);
+        return \%statvfs;
+    }
+    return undef;
+}
+
+sub statvfs {
+    @_ == 2 or croak 'Usage: $sftp->statvfs($path)';
+    ${^TAINT} and &_catch_tainted_args;
+
+    my ($sftp, $path) = @_;
+    $sftp->_check_extension('statvfs@openssh.com' => 2,
+                            SFTP_ERR_REMOTE_STATVFS_FAILED,
+                            "statvfs failed")
+        or return undef;
+
+    $path = $sftp->_rel2abs($path);
+    my $id = $sftp->_queue_new_msg(SSH2_FXP_EXTENDED,
+                                   str => 'statvfs@openssh.com',
+                                   str => $sftp->_fs_encode($path));
+    $sftp->_get_statvfs($id,
+                        SFTP_ERR_REMOTE_STATVFS_FAILED,
+                        "Couldn't stat remote file system");
+}
+
+sub fstatvfs {
+    @_ == 2 or croak 'Usage: $sftp->fstatvfs($fh)';
+    ${^TAINT} and &_catch_tainted_args;
+
+    my ($sftp, $fh) = @_;
+    $sftp->_check_extension('fstatvfs@openssh.com' => 2,
+                            SFTP_ERR_REMOTE_FSTATVFS_FAILED,
+                            "fstatvfs failed")
+        or return undef;
+
+    my $rid = $sftp->_rid($fh);
+    my $id = $sftp->_queue_new_msg(SSH2_FXP_EXTENDED,
+                                   str => 'fstatvfs@openssh.com',
+                                   str => $rid);
+    $sftp->_get_statvfs($id,
+                        SFTP_ERR_REMOTE_FSTATVFS_FAILED,
+                        "Couldn't stat remote file system");
 }
 
 package Net::SFTP::Foreign::Handle;
@@ -3975,10 +4088,33 @@ containing C<'..'> into absolute paths.
 
 Returns the absolute path on success, C<undef> on failure.
 
-=item $sftp-E<gt>rename($old, $new)
+=item $sftp-E<gt>rename($old, $new, %opts)
 
 Sends a C<SSH_FXP_RENAME> command to rename C<$old> to C<$new>.
 Returns a true value on success and undef on failure.
+
+Accepted options are:
+
+=over 4
+
+=item overwrite => $bool
+
+By default, the rename operation fails when a file C<$new> already
+exists. When this options is set, any previous existant file is
+deleted first (the C<atomic_rename> operation will be used if
+available).
+
+Note than under some conditions the target file could be deleted and
+afterwards the rename operation fail.
+
+=back
+
+=item $sftp-E<gt>atomic_rename($old, $new)
+
+Renames a file using the C<posix-rename@openssh.com> extension when
+available.
+
+Unlike the C<rename> method, it overwrites any previous C<$new> file.
 
 =item $sftp-E<gt>readlink($path)
 
@@ -3996,6 +4132,34 @@ C<$target> is stored as-is, without any path expansion taken place on
 it. User C<realpath> to normalize it:
 
   $sftp->symlink("foo.lnk" => $sftp->realpath("../bar"))
+
+=item $sftp-E<gt>statvfs($path)
+
+=item $sftp-E<gt>fstatvfs($fh)
+
+On servers supporting C<statvfs@openssh.com> and
+C<fstatvfs@openssh.com> extensions respectively, these methods return
+a hash reference with information about the file system where the file
+named C<$path> or the open file C<$fh> resides.
+
+The hash entries are:
+
+  bsize   => file system block size
+  frsize  => fundamental fs block size
+  blocks  => number of blocks (unit f_frsize)
+  bfree   => free blocks in file system
+  bavail  => free blocks for non-root
+  files   => total file inodes
+  ffree   => free file inodes
+  favail  => free file inodes for to non-root
+  fsid    => file system id
+  flag    => bit mask of f_flag values
+  namemax => maximum filename length
+
+The values of the f_flag bit mask are as follows:
+
+  SSH2_FXE_STATVFS_ST_RDONLY => read-only
+  SSH2_FXE_STATVFS_ST_NOSUID => no setuid
 
 =item $sftp-E<gt>disconnect
 
@@ -4227,6 +4391,13 @@ C<$^O> on your machine and the OpenSSH version.
 
 From version 0.90_18 upwards, a dirty cleanup is performed anyway when
 the SSH process does not terminate by itself in 8 seconds or less.
+
+=item - Reversed symlink arguments:
+
+This package uses the non-conforming OpenSSH argument order for the
+SSH_FXP_SYMLINK command that seems to be the de facto standard. When
+interacting with SFTP servers that follow the SFTP specification, the
+C<symlink> method will interpret its arguments in reverse order.
 
 =back
 

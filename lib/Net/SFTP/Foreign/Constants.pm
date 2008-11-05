@@ -37,6 +37,8 @@ BEGIN {
 		      SSH2_FXP_DATA => 103,
 		      SSH2_FXP_NAME => 104,
 		      SSH2_FXP_ATTRS => 105,
+                      SSH2_FXP_EXTENDED => 200,
+                      SSH2_FXP_EXTENDED_REPLY => 201,
 
 		      SSH2_FXF_READ => 0x01,
 		      SSH2_FXF_WRITE => 0x02,
@@ -62,6 +64,9 @@ BEGIN {
 		      SSH2_FILEXFER_ATTR_EXTENDED => 0x80000000,
 
 		      SSH2_FILEXFER_VERSION => 3,
+
+                      SSH2_FXE_STATVFS_ST_READONLY => 0x1,
+                      SSH2_FXE_STATVFS_ST_NOSUID => 0x2,
 
 		      SFTP_ERR_REMOTE_STAT_FAILED => 1,
 		      SFTP_ERR_REMOTE_OPEN_FAILED => 2,
@@ -109,6 +114,8 @@ BEGIN {
                       SFTP_ERR_REMOTE_BIGGER_THAN_LOCAL => 45,
                       SFTP_ERR_LOCAL_BIGGER_THAN_REMOTE => 46,
                       SFTP_ERR_LOCAL_SEEK_FAILED => 47,
+                      SFTP_ERR_REMOTE_STATVFS_FAILED => 48,
+                      SFTP_ERR_REMOTE_FSTATVFS_FAILED => 49,
                     );
 
     for my $key (keys %constants) {
@@ -119,11 +126,12 @@ BEGIN {
 
     @EXPORT_OK = keys %constants;
 
-    my %etagre = qw( fxp SSH2_FXP
-		     flags SSH2_FXF
+    my %etagre = qw( fxp SSH2_FXP_
+		     flags SSH2_FXF_
 		     att SSH2_FILEXFER_ATTR
-		     status SSH2_FX_ 
-		     error SFTP_ERR );
+		     status SSH2_FX_
+		     error SFTP_ERR_
+                     ext SSH2_FXE_);
 
     for my $key (keys %etagre) {
 	my $re = qr/^$etagre{$key}/;
@@ -210,6 +218,14 @@ C<SFTP_ERR_REMOTE_SETSTAT_FAILED>, C<SFTP_ERR_REMOTE_STAT_FAILED> and
 C<SFTP_ERR_REMOTE_WRITE_FAILED>.
 
 Note: these constants are not defined on the SFTP draft.
+
+=item :ext
+
+Import all the C<SSH2_FXE_*> constants: there are the constants
+defined for usage with SFTP extensions.
+
+Currently, these are supported: C<SSH2_FXE_STATVFS_ST_RDONLY>,
+C<SSH_FXE_STATVFS_ST_NOSUID>.
 
 =back
 

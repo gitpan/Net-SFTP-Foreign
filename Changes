@@ -1,7 +1,9 @@
 Revision history for Net::SFTP::Foreign
 
-
-1.45_05  Nov 4, 2008
+1.45_06  Nov 5, 2008
+        - add support for OpenSSH protocol extensions statvfs,
+          fstatvfs and posix-rename.
+        - add overwrite feature to rename method
         - new fs_encoding feature added ***this is a mayor internal
           change that could introduce new bugs***
         - when parsing status msgs, the string was not being converted

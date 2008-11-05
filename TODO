@@ -3,7 +3,7 @@ TODO
 ====
 
 - add support for new extension methods available from late OpenSSH
-  SFTP server
+  SFTP server (http://www.sfr-fresh.com/unix/misc/openssh-5.1.tar.gz:a/ssh/PROTOCOL)
 
 - add support for capture_stderr option in constructor
 
