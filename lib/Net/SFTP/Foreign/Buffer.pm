@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign::Buffer;
 
-our $VERSION = '1.31';
+our $VERSION = '1.45';
 
 use strict;
 use warnings;
@@ -11,10 +11,10 @@ use Carp;
 use constant HAS_QUADS => do {
     local $@;
     local $SIG{__DIE__};
-    eval {
-        no warnings;
+    no warnings;
+    eval q{
         pack(Q => 0x1122334455667788) eq "\x11\x22\x33\x44\x55\x66\x77\x88"
-    };
+    }
 };
 
 sub new {

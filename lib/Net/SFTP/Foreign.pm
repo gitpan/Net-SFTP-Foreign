@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.45_06';
+our $VERSION = '1.45_07';
 
 use strict;
 use warnings;
@@ -11,7 +11,21 @@ use IPC::Open2;
 use Symbol ();
 use Errno ();
 use Scalar::Util;
-use Encode ();
+
+BEGIN {
+    if ($] >= 5.008) {
+        require Encode;
+    }
+    else {
+        # Work around for incomplete Unicode handling in perl 5.6.x
+        require bytes;
+        bytes->import();
+        *Encode::encode = sub { $_[1] };
+        *Encode::decode = sub { $_[1] };
+        *utf8::is_utf8 = sub { undef };
+    }
+}
+
 our $debug;
 our $dirty_cleanup;
 my $windows;
@@ -298,8 +312,13 @@ sub new {
     $sftp->{_late_set_perm} = delete $opts{late_set_perm};
     $sftp->{_fs_encoding} = delete $opts{fs_encoding};
 
-    $sftp->{_fs_encoding} = 'utf8'
-        unless defined $sftp->{_fs_encoding};
+    if (defined $sftp->{_fs_encoding}) {
+        $] < 5.008
+            and warn "fs_encoding feature is not supported in this perl version $]";
+    }
+    else {
+        $sftp->{_fs_encoding} = 'utf8';
+    }
 
     $sftp->autodisconnect(delete $opts{autodisconnect});
 
@@ -3146,6 +3165,9 @@ C<latin1> representation before sending it to the remote side.
 
 Note that this option will not affect file contents in any way.
 
+This feature is not supported in perl 5.6 due to incomplete unicode
+support in the interpreter.
+
 =item password =E<gt> $password
 
 =item passphrase =E<gt> $passphrase
@@ -4366,6 +4388,21 @@ closed.
 Send me a bug report containing a dump of your $sftp object so I
 can add code for your particular server software to activate the
 work-around automatically.
+
+=item disable password authentication completely
+
+B<Q>: When we try to open a session and the key either doesn't exist
+or is invalid, the child SSH hangs waiting for a password to be
+entered.  Is there a way to make this fail back to the Perl program to
+be handled?
+
+B<A>: Disable anything but public key SSH authentication calling the
+new method as follows:
+
+  $sftp = Net::SFTP::Foreign->new($host,
+                more => [qw(-o PreferredAuthentications=publickey)])
+
+See L<ssh_config(5)> for the details.
 
 =back
 

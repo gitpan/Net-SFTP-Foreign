@@ -1,6 +1,9 @@
 Revision history for Net::SFTP::Foreign
 
-1.45_06  Nov 5, 2008
+1.45_07  Nov 6, 2008
+        - workaround incomplete unicode support in perl 5.6.x
+        - new FAQ entry about how to completely disable passwd
+          authentication
         - add support for OpenSSH protocol extensions statvfs,
           fstatvfs and posix-rename.
         - add overwrite feature to rename method
