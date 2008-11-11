@@ -1,6 +1,8 @@
 Revision history for Net::SFTP::Foreign
 
-1.45_07  Nov 6, 2008
+1.45_08  Nov 11, 2008
+        - reduce localized scope for $SIG{__DIE__} and $@ (bug report
+          by David Serrano and David Riosalido)
         - workaround incomplete unicode support in perl 5.6.x
         - new FAQ entry about how to completely disable passwd
           authentication

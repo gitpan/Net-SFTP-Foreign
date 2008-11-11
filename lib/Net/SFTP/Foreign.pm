@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.45_07';
+our $VERSION = '1.45_08';
 
 use strict;
 use warnings;
@@ -398,8 +398,6 @@ sub new {
         }
 
         my $this_pid = $$;
-        local $@;
-        local $SIG{__DIE__};
 
         if (defined $pass) {
 
@@ -422,7 +420,11 @@ sub new {
             $expect->raw_pty(1);
             $expect->log_user($expect_log_user);
 
-            my $child = eval { open2($sftp->{ssh_in}, $sftp->{ssh_out}, '-') };
+            my $child = do {
+                local $@;
+                local $SIG{__DIE__};
+                eval { open2($sftp->{ssh_in}, $sftp->{ssh_out}, '-') }
+            };
             if (defined $child and !$child) {
                 $pty->make_slave_controlling_terminal;
                 do { exec @open2_cmd }; # work around suppress warning under mod_perl
@@ -503,8 +505,6 @@ sub disconnect {
                 and waitpid($pid, 0);
         }
         else {
-            local $@;
-            local $SIG{__DIE__};
             for my $sig (0, 1, 1, 9, 9) {
                 if ($sig) {
                     kill $sig, $pid
@@ -512,15 +512,21 @@ sub disconnect {
                 else {
                     next if $dirty_cleanup
                 }
-                eval {
-                    local $SIG{ALRM} = sub { die "timeout\n" };
-                    alarm 8;
-                    waitpid($pid, 0);
-                    alarm 0;
-                };
-                if ($@) {
-                    next if $@ =~ /^timeout/;
-                    die $@;
+                my $except;
+                {
+                    local $@;
+                    local $SIG{__DIE__};
+                    eval {
+                        local $SIG{ALRM} = sub { die "timeout\n" };
+                        alarm 8;
+                        waitpid($pid, 0);
+                        alarm 0;
+                    };
+                    $except = $@;
+                }
+                if ($except) {
+                    next if $except =~ /^timeout/;
+                    die $except;
                 }
                 last;
             }
@@ -2469,7 +2475,6 @@ sub rget {
 				 if (S_ISLNK($e->{a}->perm) and !$ignore_links) {
 				     if (my $link = $sftp->readlink($fn)) {
                                          {
-                                             local $@;
                                              local $SIG{__DIE__};
                                              if (eval {CORE::symlink $link, $lpath}) {
                                                  $count++;
