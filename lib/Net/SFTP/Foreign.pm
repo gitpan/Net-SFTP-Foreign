@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.45_08';
+our $VERSION = '1.46';
 
 use strict;
 use warnings;
@@ -361,7 +361,7 @@ sub new {
             my $user = delete $opts{user};
 
             my $more = delete $opts{more};
-            carp "'more' argument looks like if it needs to be splited first"
+            carp "'more' argument looks like if it should be splited first"
                 if (defined $more and !ref($more) and $more =~ /^-\w\s+\S/);
 
             if ($ssh_cmd_interface eq 'plink') {
@@ -3006,8 +3006,14 @@ Net::SFTP::Foreign - SSH File Transfer Protocol client
 
     use Net::SFTP::Foreign;
     my $sftp = Net::SFTP::Foreign->new($host);
-    $sftp->get("foo", "bar");
-    $sftp->put("bar", "baz");
+    $sftp->error and
+       die "Unable to stablish SFTP connection: " . $sftp->error;
+
+    $sftp->setcwd($path) or die "unable to change cwd: " . $sftp->error;
+
+    $sftp->get("foo", "bar") or die "get failed: " . $sftp->error;
+
+    $sftp->put("bar", "baz") or die "put failed: " . $sftp->error;
 
 =head1 DESCRIPTION
 
@@ -4047,7 +4053,7 @@ returns the next entry from the remote directory C<$handle> (or all
 the remaining entries when called in list context).
 
 The return values are a hash with three keys: C<filename>, C<longname> and
-C<a>. The C<a> value contains a C<Net::SFTP::Foreign::Attributes>
+C<a>. The C<a> value contains a L<Net::SFTP::Foreign::Attributes>
 object describing the entry.
 
 Returns undef on error or when no more entries exist on the directory.
@@ -4409,7 +4415,23 @@ new method as follows:
 
 See L<ssh_config(5)> for the details.
 
+=item understanding C<<$attr->perm>> bits
+
+B<Q>: How can I know if a directory entry is a (directory|link|file|...)?
+
+B<A>: Use the C<S_IS*> functions from L<Fcntl>. For instance:
+
+  use Fcntl qw(IS_DIR);
+  my $ls = $sftp->ls or die $sftp->error;
+  for my $entry (@$ls) {
+    if (S_ISDIR($entry->{a}->perm)) {
+      print "$entry->{filename} is a directory\n";
+    }
+  }
+
+
 =back
+
 
 =head1 BUGS
 
@@ -4460,6 +4482,7 @@ Perl.
 To report bugs, please, send me and email or use
 L<http://rt.cpan.org>.
 
+
 =head1 SEE ALSO
 
 Information about the constants used on this module is available from
@@ -4470,8 +4493,20 @@ General information about SSH and the OpenSSH implementation is
 available from the OpenSSH web site at L<http://www.openssh.org/> and
 from the L<sftp(1)> and L<sftp-server(8)> manual pages.
 
-Other modules offering similar functionality are L<Net::SFTP> or
-L<Net::SSH2>.
+Net::SFTP::Foreign integrates nicely with my other module
+L<Net::OpenSSH>.
+
+Modules offering similar functionality available from CPAN are
+L<Net::SFTP> or L<Net::SSH2>.
+
+
+=head1 COMMERCIAL SUPPORT
+
+Commercial support, professional services and custom software
+development around this module are available through my current
+company. Drop me an email with a rough description of your
+requirements and we will get back to you ASAP.
+
 
 =head1 COPYRIGHT
 
