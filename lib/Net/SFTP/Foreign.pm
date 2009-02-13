@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.46';
+our $VERSION = '1.47';
 
 use strict;
 use warnings;
@@ -161,7 +161,7 @@ sub _do_io_unix {
                 substr($$bout, 0, $written, '');
             }
             if (vec($rv1, $fnoin, 1)) {
-                my $read = sysread($sftp->{ssh_in}, $sftp->{_bin}, 20480, length($$bin));
+                my $read = sysread($sftp->{ssh_in}, $$bin, 20480, length($$bin));
                 $debug and $debug & 32 and _debug (sprintf "_do_io read sysread: %s, total read: %d",
                                                    (defined $read ? $read : 'undef'),
                                                    length $sftp->{_bin});
@@ -311,6 +311,7 @@ sub new {
     $sftp->{_autoflush} = delete $opts{autoflush};
     $sftp->{_late_set_perm} = delete $opts{late_set_perm};
     $sftp->{_fs_encoding} = delete $opts{fs_encoding};
+    $sftp->{_dirty_cleanup} = delete $opts{dirty_cleanup};
 
     if (defined $sftp->{_fs_encoding}) {
         $] < 5.008
@@ -359,6 +360,7 @@ sub new {
 
             my $port = delete $opts{port};
             my $user = delete $opts{user};
+	    my $ssh1 = delete $opts{ssh1};
 
             my $more = delete $opts{more};
             carp "'more' argument looks like if it should be splited first"
@@ -377,7 +379,8 @@ sub new {
             }
             push @open2_cmd, -l => $user if defined $user;
             push @open2_cmd, _ensure_list($more) if defined $more;
-            push @open2_cmd, $host, -s => 'sftp';
+            push @open2_cmd, $host;
+	    push @open2_cmd, ($ssh1 ? "/usr/lib/sftp-server" : -s => 'sftp');
         }
     }
 
@@ -452,21 +455,25 @@ sub new {
         }
         else {
             _debug "ssh cmd: @open2_cmd\n" if ($debug and $debug & 1);
-
-            $sftp->{pid} = eval { open2($sftp->{ssh_in}, $sftp->{ssh_out}, @open2_cmd) };
+	    do {
+		local $@;
+		local $SIG{__DIE__};
+		$sftp->{pid} = eval { open2($sftp->{ssh_in}, $sftp->{ssh_out}, @open2_cmd) };
+	    };
             _ipc_open2_bug_workaround $this_pid;
+
             unless (defined $sftp->{pid}) {
                 $sftp->_conn_failed("Bad ssh command", $!);
                 return $sftp;
             }
         }
-        for my $dir (qw(ssh_in ssh_out)) {
-            binmode $sftp->{$dir};
-            unless ($windows) {
-                my $flags = fcntl($sftp->{$dir}, F_GETFL, 0);
-                fcntl($sftp->{$dir}, F_SETFL, $flags | O_NONBLOCK);
-            }
-        }
+    }
+    for my $dir (qw(ssh_in ssh_out)) {
+	binmode $sftp->{$dir};
+	unless ($windows) {
+	    my $flags = fcntl($sftp->{$dir}, F_GETFL, 0);
+	    fcntl($sftp->{$dir}, F_SETFL, $flags | O_NONBLOCK);
+	}
     }
 
     $sftp->_init;
@@ -505,31 +512,44 @@ sub disconnect {
                 and waitpid($pid, 0);
         }
         else {
-            for my $sig (0, 1, 1, 9, 9) {
-                if ($sig) {
-                    kill $sig, $pid
-                }
-                else {
-                    next if $dirty_cleanup
-                }
-                my $except;
-                {
-                    local $@;
-                    local $SIG{__DIE__};
-                    eval {
-                        local $SIG{ALRM} = sub { die "timeout\n" };
-                        alarm 8;
-                        waitpid($pid, 0);
-                        alarm 0;
-                    };
-                    $except = $@;
-                }
-                if ($except) {
-                    next if $except =~ /^timeout/;
-                    die $except;
-                }
-                last;
-            }
+	    my $dirty = ( defined $sftp->{_dirty_cleanup}
+			  ? $sftp->{_dirty_cleanup}
+			  : $dirty_cleanup );
+
+	    if ($dirty or not defined $dirty) {
+
+		for my $sig (($dirty ? () : 0), 1, 1, 9, 9) {
+		    $sig and kill $sig, $pid;
+
+		    my $except;
+		    {
+			local $@;
+			local $SIG{__DIE__};
+			eval {
+			    local $SIG{ALRM} = sub { die "timeout\n" };
+			    alarm 8;
+			    waitpid($pid, 0);
+			    alarm 0;
+			};
+			$except = $@;
+		    }
+		    if ($except) {
+			next if $except =~ /^timeout/;
+			die $except;
+		    }
+		    last;
+		}
+	    }
+	    else {
+		while (1) {
+		    last if waitpid($pid, 0) > 0;
+		    if ($! != Errno::EINTR) {
+			warn "internal error: unexpected error in waitpid($pid): $!"
+			    if $! != Errno::ECHILD;
+			last;
+		    }
+		}
+	    }
         }
     }
     1
@@ -3071,9 +3091,6 @@ proccess being launched and running, depending on your OS this could
 eat more resources than the in process pure perl implementation
 provided by Net::SSH::Perl.
 
-Net::SFTP::Foreign supports version 2 of the SSH protocol only.
-
-
 =head2 Usage
 
 Most of the methods available from this package return undef on
@@ -3199,6 +3216,10 @@ For instance:
 
   my $sftp = Net::SFTP::Foreign->new($host, ssh_cmd => 'plink');
 
+=item ssh1 =E<gt> 1
+
+Use old SSH1 approach for starting the remote SFTP server.
+
 =item transport =E<gt> $fh
 
 =item transport =E<gt> [$in_fh, $out_fh]
@@ -3210,6 +3231,9 @@ SFTP protocol.
 
 It can be (ab)used to make this module work with password
 authentication or with keys requiring a passphrase.
+
+C<in_fh> is the file handler used to read data from the remote server,
+C<out_fh> is the file handler used to write data.
 
 On some systems, when using a pipe as the transport, closing it, does
 not cause the process at the other side to exit. The additional
@@ -3266,6 +3290,11 @@ See also the disconnect and autodisconnect methods.
 =item late_set_perm =E<gt> $bool
 
 See the FAQ below.
+
+=item dirty_cleanup =E<gt> $bool
+
+Sets the C<dirty_cleanup> flag in a per object basis (see the BUGS
+section).
 
 =back
 

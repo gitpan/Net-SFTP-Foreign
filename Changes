@@ -1,5 +1,10 @@
 Revision history for Net::SFTP::Foreign
 
+1.47  Feb 11, 2009
+        - add support for per object dirty cleanup flag required by
+          proper Net::OpenSSH integration
+	- add support for old SSH1
+
 1.46  Dec 18, 2008
         - release as stable version
 	- improve synopsis documentation
