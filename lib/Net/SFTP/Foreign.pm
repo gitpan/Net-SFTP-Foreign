@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.48_01';
+our $VERSION = '1.48_02';
 
 use strict;
 use warnings;
@@ -2757,7 +2757,7 @@ sub _get_statvfs {
     my ($sftp, $eid, $error, $errstr) = @_;
     if (my $msg = $sftp->_get_msg_and_check(SSH2_FXP_EXTENDED_REPLY,
                                             $eid, $error, $errstr)) {
-        printf STDERR "msg length: %i\n", length $$msg;
+        # printf STDERR "msg length: %i\n", length $$msg;
         my %statvfs = map { $_ => $msg->get_int64 } qw(bsize frsize blocks
                                                        bfree bavail files ffree
                                                        favail fsid flag namemax);

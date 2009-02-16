@@ -1,6 +1,9 @@
 Revision history for Net::SFTP::Foreign
 
-1.48_01  Feb 16, 2009
+1.48_02  Feb 16, 2009
+	- follow_links option from find method was broken (bug report
+          by Paul Kolano)
+	- spurious debugging message removed from statvfs
         - put and get now accept a file handle instead of a file name
           for the local file (feature request by David Morel)
         - add support for append option in put and get

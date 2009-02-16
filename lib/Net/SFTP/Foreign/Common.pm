@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign::Common;
 
-our $VERSION = '1.37';
+our $VERSION = '1.48';
 
 use strict;
 use warnings;
@@ -151,7 +151,7 @@ sub find {
 	my $entry = shift;
 	my $fn = $entry->{filename};
 	for (1) {
-	    my $follow = $follow_links and S_ISLNK($entry->{a}->perm);
+	    my $follow = ($follow_links and S_ISLNK($entry->{a}->perm));
 
 	    if ($follow or $realpath) {
 		unless (defined $entry->{realpath}) {
