@@ -21,7 +21,7 @@ plan skip_all => "tests not supported on inferior OS"
 plan skip_all => "sftp-server not found"
     unless defined $sscmd;
 
-plan tests => 589;
+plan tests => 717;
 
 use_ok('Net::SFTP::Foreign');
 use Net::SFTP::Foreign::Constants qw(:flags);
@@ -78,6 +78,14 @@ for my $setcwd (0, 1) {
 
         ok(!filediff($dlfn, $drfn1_l), "put - file content - $i");
 
+	unlink $drfn_l;
+	ok (open(F, '<', $dlfn), "put fh - open - $i");
+	ok ($sftp->put(\*F, $drfn1), "put fh - $i");
+        diag ($sftp->error) if $sftp->error;
+	ok (close(F), "put fh - close - $i");
+
+        ok(!filediff($dlfn, $drfn1_l), "put fh - file content - $i");
+
         unlink $drfn_l;
         ok($sftp->rename($drfn1, $drfn), "rename - $i");
         diag ($sftp->error) if $sftp->error;
@@ -98,10 +106,16 @@ for my $setcwd (0, 1) {
         ok (!$sftp->put($dlfn, $drfn, overwrite => 0), "no overwrite - $i");
         is (int $sftp->error, Net::SFTP::Foreign::Constants::SFTP_ERR_REMOTE_OPEN_FAILED(), "no overwrite - error - $i");
 
-        my $ok = 1;
         ok ($sftp->get($drfn, $dlfn1), "get - $i");
         diag ($sftp->error) if $sftp->error;
         ok(!filediff($drfn_l, $dlfn1), "get - file content - $i");
+        unlink $dlfn1;
+
+	ok (open(F, '>', $dlfn1), "get fh - open - $i");
+	ok ($sftp->get($drfn, \*F), "get fh - $i");
+	diag ($sftp->error) if $sftp->error;
+	ok (close(F), "get fh - close - $i");
+	ok(!filediff($drfn_l, $dlfn1), "get fh - file content - $i");
 
         unlink $dlfn1;
         unlink $drfn_l;

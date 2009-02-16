@@ -1,6 +1,15 @@
 Revision history for Net::SFTP::Foreign
 
-1.47  Feb 11, 2009
+1.48_01  Feb 16, 2009
+        - put and get now accept a file handle instead of a file name
+          for the local file (feature request by David Morel)
+        - add support for append option in put and get
+	- put documentation reorganized
+	- improve write caching behavior, '_write_delay' is used to
+          control the write buffer size (feature request by David
+          Morel)
+
+1.47  Feb 13, 2009
         - add support for per object dirty cleanup flag required by
           proper Net::OpenSSH integration
 	- add support for old SSH1

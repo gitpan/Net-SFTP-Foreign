@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.47';
+our $VERSION = '1.48_01';
 
 use strict;
 use warnings;
@@ -306,6 +306,7 @@ sub new {
 
     $sftp->{_block_size} = delete $opts{block_size} || DEFAULT_BLOCK_SIZE;
     $sftp->{_read_ahead} = $sftp->{_block_size} * 4;
+    $sftp->{_write_delay} = $sftp->{_block_size} * 8;
     $sftp->{_queue_size} = delete $opts{queue_size} || DEFAULT_QUEUE_SIZE;
     $sftp->{_timeout} = delete $opts{timeout};
     $sftp->{_autoflush} = delete $opts{autoflush};
@@ -412,8 +413,7 @@ sub new {
             eval { require Expect };
             $@ and croak "password authentication is not available, Expect is not installed";
 
-            local $ENV{SSH_ASKPASS} if $passphrase;
-            local $ENV{SSH_AUTH_SOCK} if $passphrase;
+            local ($ENV{SSH_ASKPASS}, $ENV{SSH_AUTH_SOCK}) if $passphrase;
 
             my $name = $passphrase ? 'Passphrase' : 'Password';
             my $eto = $sftp->{_timeout} ? $sftp->{_timeout} * 4 : 120;
@@ -424,8 +424,7 @@ sub new {
             $expect->log_user($expect_log_user);
 
             my $child = do {
-                local $@;
-                local $SIG{__DIE__};
+                local ($@, $SIG{__DIE__}, $SIG{__WARN__});
                 eval { open2($sftp->{ssh_in}, $sftp->{ssh_out}, '-') }
             };
             if (defined $child and !$child) {
@@ -456,8 +455,7 @@ sub new {
         else {
             _debug "ssh cmd: @open2_cmd\n" if ($debug and $debug & 1);
 	    do {
-		local $@;
-		local $SIG{__DIE__};
+                local ($@, $SIG{__DIE__}, $SIG{__WARN__});
 		$sftp->{pid} = eval { open2($sftp->{ssh_in}, $sftp->{ssh_out}, @open2_cmd) };
 	    };
             _ipc_open2_bug_workaround $this_pid;
@@ -523,8 +521,7 @@ sub disconnect {
 
 		    my $except;
 		    {
-			local $@;
-			local $SIG{__DIE__};
+			local ($@, $SIG{__DIE__}, $SIG{__WARN__});
 			eval {
 			    local $SIG{ALRM} = sub { die "timeout\n" };
 			    alarm 8;
@@ -556,9 +553,7 @@ sub disconnect {
 }
 
 sub DESTROY {
-    local $?;
-    local $!;
-    local $@;
+    local ($?, $!, $@);
 
     my $sftp = shift;
     my $dbpid = $sftp->{_disconnect_by_pid};
@@ -956,7 +951,7 @@ sub write {
     my $len = length $$bout;
 
     $sftp->flush($rfh, 'out')
-	if ($len > $sftp->{_block_size} or ($len and $sftp->{_autoflush} ));
+	if ($len >= $sftp->{_write_delay} or ($len and $sftp->{_autoflush} ));
 
     return $datalen;
 }
@@ -1560,6 +1555,7 @@ sub get {
 
     my ($sftp, $remote, $local, %opts) = @_;
     $remote = $sftp->_rel2abs($remote);
+    my $local_is_fh = (ref $local and $local->isa('GLOB'));
 
     $sftp->_set_status;
     $sftp->_set_error;
@@ -1571,26 +1567,32 @@ sub get {
     my $copy_time = delete $opts{copy_time};
     my $overwrite = delete $opts{overwrite};
     my $resume = delete $opts{resume};
+    my $append = delete $opts{append};
     my $block_size = delete $opts{block_size} || $sftp->{_block_size};
     my $queue_size = delete $opts{queue_size} || $sftp->{_queue_size};
     my $dont_save = delete $opts{dont_save};
     my $conversion = delete $opts{conversion};
 
-    my $oldumask = umask;
-
-    %opts and _croak_bad_options(keys %opts);
-
     croak "'perm' and 'umask' options can not be used simultaneously"
 	if (defined $perm and defined $umask);
-
     croak "'perm' and 'copy_perm' options can not be used simultaneously"
 	if (defined $perm and defined $copy_perm);
+    croak "'resume' and 'append' options can not be used simultaneously"
+	if ($resume and $append);
+    if ($local_is_fh) {
+	my $append = 'option can not be used when target is a file handle';
+	$resume and croak "'resume' $append";
+	$overwrite and croak "'overwrite' $append";
+	$dont_save and croak "'dont_save' $append";
+    }
+    %opts and _croak_bad_options(keys %opts);
 
     if ($resume and $conversion) {
         carp "resume option is useless when data conversion has also been requested";
         undef $resume;
     }
 
+    my $oldumask = umask;
     my $numask;
 
     if (defined $perm) {
@@ -1601,9 +1603,9 @@ sub get {
 	$numask = 0777 & ~$umask;
     }
 
-    $overwrite = 1 unless defined $overwrite;
-    $copy_perm = 1 unless (defined $perm or defined $copy_perm);
-    $copy_time = 1 unless defined $copy_time;
+    $overwrite = 1 unless (defined $overwrite or $local_is_fh);
+    $copy_perm = 1 unless (defined $perm or defined $copy_perm or $local_is_fh);
+    $copy_time = 1 unless (defined $copy_time or $local_is_fh);
 
     my $size;
     my $a = $sftp->stat($remote);
@@ -1626,18 +1628,21 @@ sub get {
 
     my ($rfh, $fh);
     my $askoff = 0;
+    my $lstart = 0;
 
     if ($dont_save) {
         $rfh = $sftp->open($remote, SSH2_FXF_READ);
         defined $rfh or return undef;
     }
     else {
-        if (!$overwrite and !$resume and -e $local) {
-            $sftp->_set_error(SFTP_ERR_LOCAL_ALREADY_EXISTS,
-                              "local file $local already exists");
-            return undef
+        unless ($local_is_fh or $overwrite or $append or $resume) {
+	    if (-e $local) {
+		$sftp->_set_error(SFTP_ERR_LOCAL_ALREADY_EXISTS,
+				  "local file $local already exists");
+		return undef
+	    }
         }
-	
+
         if ($copy_perm) {
             my $aperm = $a->perm;
             $perm = 0666 unless defined $perm;
@@ -1645,12 +1650,12 @@ sub get {
             $perm = int $1;
         }
 
-        $perm = (0666 & $numask) unless defined $perm;
+        $perm = (0666 & $numask)
+	    unless (defined $perm or $local_is_fh);
 
         if ($resume) {
-            if (CORE::open $fh, '+<', $local) {
+            if (CORE::open $fh, '>>', $local) {
                 binmode $fh;
-                CORE::seek($fh, 0, 2);
                 $askoff = CORE::tell $fh;
                 if ($askoff < 0) {
                     # something is going really wrong here, fall
@@ -1675,35 +1680,38 @@ sub get {
         $rfh = $sftp->open($remote, SSH2_FXF_READ);
         defined $rfh or return undef;
 
-        unless (defined $fh) {
-            my $lumask = ~$perm & 0666;
-            umask $lumask;
-
-            unlink $local;
-
-            unless (CORE::open $fh, '>', $local) {
-                umask $oldumask;
-                $sftp->_set_error(SFTP_ERR_LOCAL_OPEN_FAILED,
+	unless (defined $fh) {
+	    if ($local_is_fh) {
+		$fh = $local;
+		local ($@, $SIG{__DIE__}, $SIG{__WARN__});
+		eval { $lstart = CORE::tell($fh) };
+		$lstart = 0 unless ($lstart and $lstart > 0);
+	    }
+	    else {
+		my $lumask = ~$perm & 0666;
+		umask $lumask;
+		unlink $local unless $append;
+		unless (CORE::open $fh, ($append ? '>>' : '>'), $local) {
+		    umask $oldumask;
+		    $sftp->_set_error(SFTP_ERR_LOCAL_OPEN_FAILED,
                                   "Can't open $local", $!);
-                return undef;
-            }
-            umask $oldumask;
+		    return undef;
+		}
+		umask $oldumask;
+		binmode $fh;
+		$lstart = CORE::tell $fh if $append;
+	    }
+	}
 
-            binmode $fh;
-        }
-
-        # if ((0666 & ~$lumask) != $perm) { ...
-        # this optimization removed because it doesn't work for already
-        # existant files :-(
-
-        # unless (chmod $perm & $numask, $fh) {
-        # fchmod is not available everywhere!
-
-        unless (chmod $perm & $numask, $local) {
-            $sftp->_set_error(SFTP_ERR_LOCAL_CHMOD_FAILED,
-                              "Can't chmod $local", $!);
-            return undef
-        }
+	if (defined $perm) {
+	    local ($@, $SIG{__DIE__}, $SIG{__WARN__});
+	    my $e = eval { chmod($perm & $numask, $local) };
+	    if ($@ or $e <= 0) {
+		$sftp->_set_error(SFTP_ERR_LOCAL_CHMOD_FAILED,
+				  "Can't chmod $local", ($@ ? $@ : $!));
+		return undef
+	    }
+	}
     }
 
     my $converter = _gen_converter $conversion;
@@ -1727,7 +1735,6 @@ sub get {
 
 	    my $id = $sftp->_queue_new_msg(SSH2_FXP_READ, str=> $rfid,
 					   int64 => $askoff, int32 => $block_size);
-		
 	    push @msgid, $id;
 	    push @askoff, $askoff;
 	    $askoff += $block_size;
@@ -1751,7 +1758,7 @@ sub get {
 
 	my $data = $msg->get_str;
 	my $len = length $data;
-	
+
 	if ($roff != $loff or !$len) {
 	    $sftp->_set_error(SFTP_ERR_REMOTE_BLOCK_TOO_SMALL,
                               "remote packet received is too small" );
@@ -1769,7 +1776,9 @@ sub get {
 
         if (length($data) and defined $cb) {
 	    # $size = $loff if ($loff > $size and $size != -1);
-	    $cb->($sftp, $data, $roff + $adjustment_before, $size + $adjustment);
+	    $cb->($sftp, $data,
+		  $lstart + $roff + $adjustment_before,
+		  $lstart + $size + $adjustment);
 
             last if $sftp->error;
 	}
@@ -1824,10 +1833,10 @@ sub get {
     }
 
     unless ($dont_save) {
-        unless (CORE::close $fh) {
-            $sftp->_set_error(SFTP_ERR_LOCAL_WRITE_FAILED,
-                              "unable to write data to local file $local", $!);
-            return undef;
+	unless ($local_is_fh or CORE::close $fh) {
+	    $sftp->_set_error(SFTP_ERR_LOCAL_WRITE_FAILED,
+			      "unable to write data to local file $local", $!);
+	    return undef;
         }
 
         # we can be running on taint mode, so some checks are
@@ -1873,6 +1882,7 @@ sub put {
 
     my ($sftp, $local, $remote, %opts) = @_;
     $remote = $sftp->_rel2abs($remote);
+    my $local_is_fh = (ref $local and $local->isa('GLOB'));
 
     $sftp->_set_error;
     $sftp->_set_status;
@@ -1885,22 +1895,28 @@ sub put {
     my $copy_time = delete $opts{copy_time};
     my $overwrite = delete $opts{overwrite};
     my $resume = delete $opts{resume};
+    my $append = delete $opts{append};
     my $block_size = delete $opts{block_size} || $sftp->{_block_size};
     my $queue_size = delete $opts{queue_size} || $sftp->{_queue_size};
     my $conversion = delete $opts{conversion};
     my $late_set_perm = delete $opts{late_set_perm};
-    $late_set_perm = $sftp->{_late_set_perm} unless defined $late_set_perm;
-
-    %opts and _croak_bad_options(keys %opts);
 
     croak "'perm' and 'umask' options can not be used simultaneously"
 	if (defined $perm and defined $umask);
-
     croak "'perm' and 'copy_perm' options can not be used simultaneously"
-	if (defined $perm and defined $copy_perm);
+	if (defined $perm and $copy_perm);
+    croak "'resume' and 'append' options can not be used simultaneously"
+	if ($resume and $append);
+    croak "'resume' and 'overwrite' options can not be used simultaneously"
+	if ($resume and $overwrite);
+    %opts and _croak_bad_options(keys %opts);
+
+    $overwrite = 1 unless defined $overwrite;
+    $copy_perm = 1 unless (defined $perm or defined $copy_perm or $local_is_fh);
+    $copy_time = 1 unless (defined $copy_time or $local_is_fh);
+    $late_set_perm = $sftp->{_late_set_perm} unless defined $late_set_perm;
 
     my $numask;
-
     if (defined $perm) {
 	$numask = $perm;
     }
@@ -1908,34 +1924,43 @@ sub put {
 	$umask = umask unless defined $umask;
 	$numask = 0777 & ~$umask;
     }
-    $overwrite = 1 unless defined $overwrite;
-    $copy_perm = 1 unless (defined $perm or defined $copy_perm);
-    $copy_time = 1 unless defined $copy_time;
 
-    my $fh;
-    unless (CORE::open $fh, '<', $local) {
-	$sftp->_set_error(SFTP_ERR_LOCAL_OPEN_FAILED,
-			 "Unable to open local file '$local'", $!);
-	return undef;
+    my ($fh, $lmode, $lsize, $latime, $lmtime);
+    if ($local_is_fh) {
+	$fh = $local;
+	# we don't set binmode for the passed file handle on purpose
+    }
+    else {
+	unless (CORE::open $fh, '<', $local) {
+	    $sftp->_set_error(SFTP_ERR_LOCAL_OPEN_FAILED,
+			      "Unable to open local file '$local'", $!);
+	    return undef;
+	}
+	binmode $fh;
     }
 
-    binmode $fh;
-
-    my ($lmode, $lsize, $latime, $lmtime);
-    unless ((undef, undef, $lmode, undef, undef,
-	     undef, undef, $lsize, $latime, $lmtime) = CORE::stat $fh) {
-	$sftp->_set_error(SFTP_ERR_LOCAL_STAT_FAILED,
-			 "Couldn't stat local file '$local'", $!);
-	return undef;
-    }
-
-    if ($resume and $resume eq 'auto') {
-        undef $resume;
-        if (my $rattrs = $sftp->stat($remote)) {
-            if ($rattrs->mtime >= $lmtime) {
-                $resume = 1;
-            }
-        }
+    {
+	# as $fh can come from the outside, it may be a tied object
+	# lacking support for some methods, so we call them wrapped
+	# inside eval blocks
+	local ($@, $SIG{__DIE__}, $SIG{__WARN__});
+	if ((undef, undef, $lmode, undef, undef,
+	     undef, undef, $lsize, $latime, $lmtime) = eval { CORE::stat $fh }) {
+	    # $fh can point at some place inside the file, not just at the
+	    # begining
+	    if ($local_is_fh) {
+		my $tell = eval { CORE::tell $fh };
+		$lsize -= $tell if ($tell and $tell > 0);
+	    }
+	}
+	elsif ($copy_perm or $copy_time) {
+	    $sftp->_set_error(SFTP_ERR_LOCAL_STAT_FAILED,
+			      "Couldn't stat local file '$local'", $!);
+	    return undef;
+	}
+	else {
+	    undef $resume if ($resume and $resume eq 'auto');
+	}
     }
 
     $perm = $lmode & $numask if $copy_perm;
@@ -1943,13 +1968,26 @@ sub put {
     $attrs->set_perm($perm) if defined $perm;
 
     my $rfh;
-    my $readoff = 0;
+    my $writeoff = 0;
     my $converter = _gen_converter $conversion;
     my $converted_input = '';
 
-    if ($resume) {
-        if (my $rattrs = $sftp->stat($remote)) {
-            $readoff = $rattrs->size;
+    if ($resume or $append) {
+	my $rattrs = $sftp->stat($remote);
+	if ($rattrs) {
+	    if ($resume and $resume eq 'auto' and $rattrs->mtime >= $lmtime) {
+		undef $resume;
+	    }
+	    else {
+		$writeoff = $rattrs->size;
+	    }
+	}
+	elsif ($append) {
+	    return undef unless $sftp->status == SSH2_FX_NO_SUCH_FILE;
+	    undef $append;
+	}
+
+	if ($resume and $writeoff) {
             if ($converter) {
                 # as size could change, we have to read and convert
                 # data until we reach the given position on the local
@@ -1958,7 +1996,7 @@ sub put {
                 my $eof_t;
                 while (1) {
                     my $len = length $converted_input;
-                    my $delta = $readoff - $off;
+                    my $delta = $writeoff - $off;
                     if ($delta <= $len) {
                         substr $converted_input, 0, $delta, '';
                         last;
@@ -1973,28 +2011,48 @@ sub put {
                         my $read = CORE::read($fh, $converted_input, $block_size * 4);
                         unless (defined $read) {
                             $sftp->_set_error(SFTP_ERR_LOCAL_READ_ERROR,
-                                              "Couldn't read from local file '$local'", $!);
+                                              "Couldn't read from local file '$local' to the resume point $writeoff", $!);
                             return undef;
                         }
-                        $lsize += $converter->($converted_input);
+                        $lsize += $converter->($converted_input) if defined $lsize;
                         utf8::is_utf8($converted_input) and croak "put converter introduced UTF8 data";
                         $read or $eof_t = 1;
                     }
                 }
             }
+	    elsif ($local_is_fh) {
+		# as some PerlIO layer could be installed on the $fh,
+		# just seeking to the resume position will not be
+		# enough. We have to read and discard data until the
+		# desired offset is reached
+		my $off = $writeoff;
+		while ($off) {
+		    my $read = CORE::read($fh, my($buf), ($off < 16384 ? $off : 16384));
+		    if ($read) {
+			$off -= $read;
+		    }
+		    else {
+			$sftp->_set_error(defined $read
+					  ? ( SFTP_ERR_REMOTE_BIGGER_THAN_LOCAL,
+					      "Couldn't resume transfer, remote file is bigger than local")
+					  : ( SFTP_ERR_LOCAL_READ_ERROR,
+					      "Couldn't read from local file handler '$local' to the resume point $writeoff", $!));
+		    }
+		}
+	    }
             else {
-                if ($readoff > $lsize) {
+                if (defined $lsize and $writeoff > $lsize) {
                     $sftp->_set_error(SFTP_ERR_REMOTE_BIGGER_THAN_LOCAL,
                                       "Couldn't resume transfer, remote file is bigger than local");
                     return undef;
                 }
-                unless (CORE::seek($fh, $readoff, 0)) {
+                unless (CORE::seek($fh, $writeoff, 0)) {
                     $sftp->_set_error(SFTP_ERR_LOCAL_SEEK_FAILED,
                                       "seek operation on local file failed: $!");
                     return undef;
                 }
             }
-            if ($readoff == $lsize) {
+            if (defined $lsize and $writeoff == $lsize) {
                 if (defined $perm and $rattrs->perm != $perm) {
                     return $sftp->setstat($remote, $attrs);
                 }
@@ -2008,14 +2066,15 @@ sub put {
     unless (defined $rfh) {
         $rfh = $sftp->open($remote,
                            SSH2_FXF_WRITE | SSH2_FXF_CREAT |
-                           ($overwrite ? SSH2_FXF_TRUNC : SSH2_FXF_EXCL),
+                           ($append ? 0 : ($overwrite ? SSH2_FXF_TRUNC : SSH2_FXF_EXCL)),
                            $attrs)
             or return undef;
     }
 
-    # In some SFTP server implementations, open does not set the
-    # attributes for existant files so we do it again.  Also, some SFTP
-    # servers do not support changing permissions on open files
+    # In some SFTP server implementations, open does not sets the
+    # attributes for existant files so we do it again. The
+    # $late_set_perm work around is for some servers that do not
+    # support changing permissions on open files
     if (defined $perm and !$late_set_perm) {
         $sftp->fsetstat($rfh, $attrs)
             or return undef;
@@ -2024,12 +2083,15 @@ sub put {
     my $rfid = $sftp->_rfid($rfh);
     defined $rfid or return undef;
 
-    my @msgid;
-    my @readoff;
+    # In append mode we add the size of the remote file in writeoff,
+    # if lsize is undef, we initialize it to $writeoff:
+    $lsize += $writeoff if ($append or not defined $lsize);
+
     my $rfno = fileno($sftp->{ssh_in});
+    # when a converter is used, the EOF can become delayed by the
+    # buffering introduced, we use $eof_t to account for that.
     my ($eof, $eof_t);
-    # when a converter is used the EOF can become delayed by
-    # the buffering introduced, we use $eof_t to account for that.
+    my @msgid;
  OK: while (1) {
         if (!$eof and @msgid < $queue_size) {
             my ($data, $len);
@@ -2044,8 +2106,8 @@ sub put {
                         }
                         $eof_t = 1;
                     }
-                    # the last time the $converter call is
-                    # performed it receives an empty string
+                    # note that the $converter is called a last time
+                    # with an empty string
                     $lsize += $converter->($input);
                     utf8::is_utf8($input) and croak "put converter introduced UTF8 data";
                     $converted_input .= $input;
@@ -2056,7 +2118,10 @@ sub put {
             }
             else {
                 $len = CORE::read($fh, $data, $block_size);
-                unless ($len) {
+                if ($len) {
+		    utf8::is_utf8($data) and croak "unexpected UTF8 data read from file";
+		}
+		else {
                     unless (defined $len) {
                         $sftp->_set_error(SFTP_ERR_LOCAL_READ_ERROR,
                                           "Couldn't read from local file '$local'", $!);
@@ -2066,27 +2131,25 @@ sub put {
                 }
             }
 
-            my $nextoff = $readoff + $len;
+            my $nextoff = $writeoff + $len;
 
             if (defined $cb) {
                 $lsize = $nextoff if $nextoff > $lsize;
-                $cb->($sftp, $data, $readoff, $lsize);
+                $cb->($sftp, $data, $writeoff, $lsize);
 
                 last OK if $sftp->error;
 
                 utf8::is_utf8($data) and croak "put callback introduced UTF8 data";
 
                 $len = length $data;
-                $nextoff = $readoff + $len;
+                $nextoff = $writeoff + $len;
             }
 
             if (length $data) {
                 my $id = $sftp->_queue_new_msg(SSH2_FXP_WRITE, str => $rfid,
-                                               int64 => $readoff, str => $data);
-		
+                                               int64 => $writeoff, str => $data);
                 push @msgid, $id;
-                push @readoff, $readoff;
-                $readoff = $nextoff;
+                $writeoff = $nextoff;
             }
         }
 
@@ -2097,7 +2160,6 @@ sub put {
                       or $sftp->_do_io(0));
 
         my $id = shift @msgid;
-        my $loff = shift @readoff;
         unless ($sftp->_check_status_ok($id,
                                         SFTP_ERR_REMOTE_WRITE_FAILED,
                                         "Couldn't write to remote file")) {
@@ -2105,7 +2167,7 @@ sub put {
         }
     }
 
-    CORE::close $fh;
+    CORE::close $fh unless $local_is_fh;
 
     $sftp->_get_msg for (@msgid);
 
@@ -2124,7 +2186,7 @@ sub put {
 	$attrs->set_amtime($latime, $lmtime);
 	$sftp->setstat($remote, $attrs);
     }
-	
+
     return $sftp->{_error} == 0;
 }
 
@@ -2495,7 +2557,7 @@ sub rget {
 				 if (S_ISLNK($e->{a}->perm) and !$ignore_links) {
 				     if (my $link = $sftp->readlink($fn)) {
                                          {
-                                             local $SIG{__DIE__};
+					     local ($@, $SIG{__DIE__}, $SIG{__WARN__});
                                              if (eval {CORE::symlink $link, $lpath}) {
                                                  $count++;
                                                  return undef;
@@ -2982,6 +3044,7 @@ sub _new_from_rid {
     my $self = $class->SUPER::_new_from_rid($sftp, $rid, $flags, []);
 }
 
+
 sub _check_is_dir {}
 
 sub _cache { *{shift()}->{ARRAY}[4] }
@@ -3008,12 +3071,6 @@ sub DESTROY {
 	$sftp->_closedir_save_status($self)
     }
 }
-
-#sub _forbidden {
-#    my $method = shift;
-#    no strict;
-#    *{$method} = sub { croak qq(forbidden method "$method" called) }
-#}
 
 1;
 __END__
@@ -3332,10 +3389,22 @@ Returns the new remote current working directory or undef on failure.
 =item $sftp-E<gt>get($remote, $local, %options)
 
 Copies remote file C<$remote> to local $local. By default file
-attributes are also copied (permissions, atime and mtime).
+attributes are also copied (permissions, atime and mtime). For
+instance:
 
-The method accepts several options (not all combinations are
-possible):
+  $sftp->get('/var/log/messages', /tmp/messages')
+    or die "file transfer failed: " . $sftp->error;
+
+A file handle can also be used as the local target. In that case, the
+remote file contents are retrieved and written to the given file
+handle. Note also that it is not closed when the transmission finish.
+
+  open F, '| gzip -c > /tmp/foo' or die ...;
+  $sftp->get("/etc/passwd", \*F)
+    or die "get failed: " . $sftp->error;
+  close F or die ...;
+
+Accepted options (not all combinations are possible):
 
 =over 4
 
@@ -3359,23 +3428,6 @@ the copied file. Default is to use the umask for the current process.
 sets the permision mask of the file to be $perm, umask and remote
 permissions are ignored.
 
-=item block_size =E<gt> $bytes
-
-size of the blocks the file is being splittered on for
-transfer. Incrementing this value can improve performance but some
-servers limit the maximum size.
-
-=item queue_size =E<gt> $size
-
-read and write requests are pipelined in order to maximize transfer
-throughput. This option allows to set the maximum number of requests
-that can be concurrently waiting for a server response.
-
-=item conversion =E<gt> $conversion
-
-on the fly data conversion of the file contents can be performed with
-this option. See L</On the fly data conversion> bellow.
-
 =item resume =E<gt> 1 | 'auto'
 
 resumes an interrupted transfer.
@@ -3385,6 +3437,17 @@ the local file is newer than the remote one.
 
 C<get> transfers can not be resumed when a data conversion is in
 place.
+
+=item append =E<gt> 1
+
+appends the contents of the remote file at the end of the local one
+instead of overwriting it. If the local file does not exist a new one
+is created.
+
+=item conversion =E<gt> $conversion
+
+on the fly data conversion of the file contents can be performed with
+this option. See L</On the fly data conversion> bellow.
 
 =item callback =E<gt> $callback
 
@@ -3422,6 +3485,18 @@ transferred (for instance, when on the fly data conversion is being
 performed or when the size of the file can not be retrieved with the
 C<stat> SFTP command before the data transfer starts).
 
+=item block_size =E<gt> $bytes
+
+size of the blocks the file is being splittered on for
+transfer. Incrementing this value can improve performance but some
+servers limit the maximum size.
+
+=item queue_size =E<gt> $size
+
+read and write requests are pipelined in order to maximize transfer
+throughput. This option allows to set the maximum number of requests
+that can be concurrently waiting for a server response.
+
 =back
 
 =item $sftp-E<gt>get_content($remote)
@@ -3431,7 +3506,24 @@ Returns the content of the remote file.
 =item $sftp-E<gt>put($local, $remote, %opts)
 
 Uploads a file C<$local> from the local host to the remote host, and
-saves it as C<$remote>. By default file attributes are also copied.
+saves it as C<$remote>. By default file attributes are also
+copied. For instance:
+
+  $sftp->put("test.txt", "test.txt")
+    or die "put failed: " . $sftp->error;
+
+An file handle can also be passed as C<$local>. In that case, data
+is read from there and stored in the remote file. UTF8 data is
+not supported unless a custom converter callback is used to transform
+it to bytes and the method will croak if it encounters any data in
+perl internal UTF8 format. Note also that the handle is not closed
+when the transmission finish.
+
+Example:
+
+  binmode STDIN;
+  $sftp->put(\*STDIN, "stdin.dat") or die "put failed";
+  close STDIN;
 
 This method accepts several options:
 
@@ -3457,23 +3549,11 @@ the copied file. Default is to use the umask for the current process.
 sets the permision mask of the file to be $perm, umask and local
 permissions are ignored.
 
-=item block_size =E<gt> $bytes
+=item append =E<gt> 1
 
-size of the blocks the file is being splittered on for
-transfer. Incrementing this value can improve performance but some
-servers limit its size and if this limit is overpassed the command
-will fail.
-
-=item queue_size =E<gt> $size
-
-read and write requests are pipelined in order to maximize transfer
-throughput. This option allows to set the maximum number of requests
-that can be concurrently waiting for a server response.
-
-=item conversion =E<gt> $conversion
-
-on the fly data conversion of the file contents can be performed with
-this option. See L</On the fly data conversion> bellow.
+appends the local file at the end of the remote file instead of
+overwriting it. If the remote file does not exist a new one is
+created.
 
 =item resume =E<gt> 1 | 'auto'
 
@@ -3481,6 +3561,11 @@ resumes an interrupted transfer.
 
 If the C<auto> value is given, the transfer will be resumed only when
 the remote file is newer than the local one.
+
+=item conversion =E<gt> $conversion
+
+on the fly data conversion of the file contents can be performed with
+this option. See L</On the fly data conversion> bellow.
 
 =item callback =E<gt> $callback
 
@@ -3495,15 +3580,27 @@ the total size of the file in bytes.
 The callback will be called one last time with an empty data argument
 to indicate the end of the file transfer.
 
-The size argument can change between different calls as data is
-transferred (for instance, when on the fly data conversion is being
-performed).
+The size argument can change between calls as data is transferred (for
+instance, when on the fly data conversion is being performed).
 
 This mechanism can be used to provide status messages, download
 progress meters, etc.
 
 The C<abort> method can be called from inside the callback to abort
 the transfer.
+
+=item block_size =E<gt> $bytes
+
+size of the blocks the file is being splittered on for
+transfer. Incrementing this value can improve performance but some
+servers limit its size and if this limit is overpassed the command
+will fail.
+
+=item queue_size =E<gt> $size
+
+read and write requests are pipelined in order to maximize transfer
+throughput. This option allows to set the maximum number of requests
+that can be concurrently waiting for a server response.
 
 =item late_set_perm =E<gt> $bool
 
@@ -4494,23 +4591,16 @@ C<symlink> method will interpret its arguments in reverse order.
 
 =back
 
-Support for filesystem encodings is experimental!
+Also, the following features should be considered experimental:
 
-Support for on-the-fly data conversion is experimental!
+- passing file handles to put and get methods
 
-Support for autoclose feature is experimental!
+- filesystem encoding
 
-Support for late_set_perm is experimental!
+- support for late_set_perm
 
-Support for transfer resuming is experimental!
-
-Support for password/passphrase handling via Expect is also
-experimental. On Windows it only works under the Cygwin version of
-Perl.
-
-To report bugs, please, send me and email or use
-L<http://rt.cpan.org>.
-
+To report bugs, send me and email or use the CPAN bug tracking system
+at L<http://rt.cpan.org>.
 
 =head1 SEE ALSO
 
@@ -4539,7 +4629,7 @@ requirements and we will get back to you ASAP.
 
 =head1 COPYRIGHT
 
-Copyright (c) 2005-2008 Salvador FandiE<ntilde>o (sfandino@yahoo.com).
+Copyright (c) 2005-2009 Salvador FandiE<ntilde>o (sfandino@yahoo.com).
 
 Copyright (c) 2001 Benjamin Trott, Copyright (c) 2003 David Rolsky.
 
