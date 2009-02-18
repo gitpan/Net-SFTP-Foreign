@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.48_02';
+our $VERSION = '1.48_03';
 
 use strict;
 use warnings;
@@ -22,7 +22,7 @@ BEGIN {
         bytes->import();
         *Encode::encode = sub { $_[1] };
         *Encode::decode = sub { $_[1] };
-        *utf8::is_utf8 = sub { undef };
+        *utf8::downgrade = sub { 1 };
     }
 }
 
@@ -619,10 +619,10 @@ sub _get_msg_and_check {
     if ($msg) {
 	my $type = $msg->get_int8;
 	my $id = $msg->get_int32;
-	
+
 	$sftp->_set_status;
 	$sftp->_set_error;
-	
+
 	if ($id != $eid) {
 	    $sftp->_conn_lost(SSH2_FX_BAD_MESSAGE,
 			      SFTP_ERR_REMOTE_BAD_MESSAGE,
@@ -768,8 +768,7 @@ sub open {
 	or return undef;
 
     my $fh = Net::SFTP::Foreign::FileHandle->_new_from_rid($sftp, $rid);
-    $fh->_flag(append => 1)
-	if ($flags & SSH2_FXF_APPEND);
+    $fh->_flag(append => 1) if ($flags & SSH2_FXF_APPEND);
 
     $fh;
 }
@@ -777,7 +776,7 @@ sub open {
 ## SSH2_FXP_OPENDIR (11)
 sub opendir {
     (@_ >= 2 and @_ <= 3)
-	or croak 'Usage: $sftp->opendir($path [, $attrs])';
+	or croak 'Usage: $sftp->opendir($path)';
     ${^TAINT} and &_catch_tainted_args;
 
     my $sftp = shift;
@@ -833,7 +832,7 @@ sub sftpwrite {
     my ($sftp, $rfh, $offset) = @_;
     my $rfid = $sftp->_rfid($rfh);
     defined $rfid or return undef;
-    utf8::is_utf8($_[3]) and croak "sftpwrite can not handle UTF8 data";
+    utf8::downgrade($_[3], 1) or croak "wide characters found in data";
 
     my $id = $sftp->_queue_new_msg(SSH2_FXP_WRITE, str => $rfid,
 				  int64 => $offset, str => $_[3]);
@@ -943,8 +942,7 @@ sub write {
 
     my ($sftp, $rfh) = @_;
     $sftp->flush($rfh, 'in') or return undef;
-
-    utf8::is_utf8($_[2]) and croak "write method can not handle UTf8 data";
+    utf8::downgrade($_[2], 1) or croak "wide characters found in data";
     my $datalen = length $_[2];
     my $bout = $rfh->_bout;
     $$bout .= $_[2];
@@ -974,7 +972,9 @@ sub flush {
 	    my $start;
 	    my $append = $rfh->_flag('append');
 	    if ($append) {
-		$start = 0;
+		my $attr = $sftp->fstat($rfh)
+		    or return undef;
+		$start = $attr->size;
 	    }
 	    else {
 		$start = $rfh->_pos;
@@ -1064,8 +1064,8 @@ sub _fill_read_cache {
     }
 
     if ($sftp->{_status} == SSH2_FX_EOF and length $$bin) {
-	$sftp->_set_status();
-	$sftp->_set_error();
+	$sftp->_set_status;
+	$sftp->_set_error;
     }
 
     return $sftp->{_error} ? undef : length $$bin;
@@ -2015,7 +2015,8 @@ sub put {
                             return undef;
                         }
                         $lsize += $converter->($converted_input) if defined $lsize;
-                        utf8::is_utf8($converted_input) and croak "put converter introduced UTF8 data";
+                        utf8::downgrade($converted_input, 1)
+				or croak "converter introduced wide characters in data";
                         $read or $eof_t = 1;
                     }
                 }
@@ -2109,7 +2110,8 @@ sub put {
                     # note that the $converter is called a last time
                     # with an empty string
                     $lsize += $converter->($input);
-                    utf8::is_utf8($input) and croak "put converter introduced UTF8 data";
+                    utf8::downgrade($input, 1)
+			    or croak "converter introduced wide characters in data";
                     $converted_input .= $input;
                 }
                 $data = substr($converted_input, 0, $block_size, '');
@@ -2119,7 +2121,8 @@ sub put {
             else {
                 $len = CORE::read($fh, $data, $block_size);
                 if ($len) {
-		    utf8::is_utf8($data) and croak "unexpected UTF8 data read from file";
+		    utf8::downgrade($data, 1)
+			    or croak "wide characters unexpectedly read from file";
 		}
 		else {
                     unless (defined $len) {
@@ -2139,7 +2142,7 @@ sub put {
 
                 last OK if $sftp->error;
 
-                utf8::is_utf8($data) and croak "put callback introduced UTF8 data";
+                utf8::downgrade($data, 1) or croak "callback introduced wide characters in data";
 
                 $len = length $data;
                 $nextoff = $writeoff + $len;
@@ -2808,6 +2811,7 @@ package Net::SFTP::Foreign::Handle;
 
 use Tie::Handle;
 our @ISA = qw(Tie::Handle);
+our @CARP_NOT = qw(Net::SFTP::Foreign Tie::Handle);
 
 my $gen_accessor = sub {
     my $ix = shift;
@@ -3031,9 +3035,7 @@ sub DESTROY {
 }
 
 package Net::SFTP::Foreign::DirHandle;
-use Tie::Handle;
 our @ISA = qw(Net::SFTP::Foreign::Handle IO::Dir);
-
 
 sub _new_from_rid {
     my $class = shift;
@@ -3101,22 +3103,17 @@ insecure connection). The security in SFTP comes through its
 integration with SSH, which provides an encrypted transport layer over
 which the SFTP commands are executed.
 
-Net::SFTP::Foreign is a Perl client for the SFTP version 3. It
-provides a subset of the commands listed in the SSH File Transfer
-Protocol IETF draft, which can be found at
+Net::SFTP::Foreign is a Perl client for the SFTP version 3 as defined
+in the SSH File Transfer Protocol IETF draft, which can be found at
 L<http://www.openssh.org/txt/draft-ietf-secsh-filexfer-02.txt> (also
-included on this package distribution, on the C<rfc> directory) plus
-some additional handy high level methods.
+included on this package distribution, on the C<rfc> directory).
 
 Net::SFTP::Foreign uses any compatible C<ssh> command installed on
 the system (for instance, OpenSSH C<ssh>) to establish the secure
 connection to the remote server.
 
-Formerly, Net::SFTP::Foreign was a hacked version of Net::SFTP, but
-from version 0.90 it has been rewritten almost completely from scratch
-and a new much improved API introduced (an adaptor module,
-L<Net::SFTP::Foreign::Compat>, is also provided for backward
-compatibility).
+A wrapper module L<Net::SFTP::Foreign::Compat> is also provided for
+compatibility with L<Net::SFTP>.
 
 
 =head2 Net::SFTP::Foreign Vs. Net::SFTP
@@ -3152,8 +3149,8 @@ provided by Net::SSH::Perl.
 
 Most of the methods available from this package return undef on
 failure and a true value or the requested data on
-success. C<$sftp-E<gt>error> can be used to explicitly check for
-errors after every method call.
+success. C<$sftp-E<gt>error> can be used to check for errors
+explicitly after every method call.
 
 Don't forget to read also the FAQ and BUGS sections at the end of this
 document!
@@ -3203,10 +3200,10 @@ the C<-v> option:
 Note that this option expects a single command argument or a reference
 to an array of arguments. For instance:
 
-  more => '-v'         # RIGHT
-  more => ['-v']       # RIGHT
-  more => "-i $key"    # WRONG!!!
-  more => [-i => $key] # RIGHT
+  more => '-v'         # right
+  more => ['-v']       # right
+  more => "-i $key"    # wrong!!!
+  more => [-i => $key] # right
 
 =item ssh_cmd_interface =E<gt> 'plink' or 'ssh'
 
@@ -3234,9 +3231,9 @@ the SFTP connection becomes invalid.
 
 =item fs_encoding =E<gt> $encoding
 
-Version 3 of the SFTP protocol implemented by this package knows
-nothing about the character encoding used on the remote filesystem
-structure (file and directory names).
+Version 3 of the SFTP protocol (the one supported by this module)
+knows nothing about the character encoding used on the remote
+filesystem to represent file and directory names.
 
 This option allows to select the encoding used in the remote
 machine. The default value is C<utf8>.
@@ -3250,7 +3247,7 @@ C<latin1> representation before sending it to the remote side.
 
 Note that this option will not affect file contents in any way.
 
-This feature is not supported in perl 5.6 due to incomplete unicode
+This feature is not supported in perl 5.6 due to incomplete Unicode
 support in the interpreter.
 
 =item password =E<gt> $password
@@ -3258,7 +3255,10 @@ support in the interpreter.
 =item passphrase =E<gt> $passphrase
 
 uses L<Expect> to handle password authentication or keys requiring a
-passphrase. This is an experimental feature!
+passphrase.
+
+Note that password authentication on Windows OSs only works when the
+Cygwin port of Perl is used.
 
 =item expect_log_user =E<gt> $bool
 
@@ -3397,7 +3397,8 @@ instance:
 
 A file handle can also be used as the local target. In that case, the
 remote file contents are retrieved and written to the given file
-handle. Note also that it is not closed when the transmission finish.
+handle. Note also that the handle is not closed when the transmission
+finish.
 
   open F, '| gzip -c > /tmp/foo' or die ...;
   $sftp->get("/etc/passwd", \*F)
@@ -3481,7 +3482,7 @@ The callback will be called one last time with an empty data argument
 to indicate the end of the file transfer.
 
 The size argument can change between different calls as data is
-transferred (for instance, when on the fly data conversion is being
+transferred (for instance, when on-the-fly data conversion is being
 performed or when the size of the file can not be retrieved with the
 C<stat> SFTP command before the data transfer starts).
 
@@ -3512,12 +3513,12 @@ copied. For instance:
   $sftp->put("test.txt", "test.txt")
     or die "put failed: " . $sftp->error;
 
-An file handle can also be passed as C<$local>. In that case, data
-is read from there and stored in the remote file. UTF8 data is
-not supported unless a custom converter callback is used to transform
-it to bytes and the method will croak if it encounters any data in
-perl internal UTF8 format. Note also that the handle is not closed
-when the transmission finish.
+A file handle can also be passed in the C<$local> argument. In that
+case, data is read from there and stored in the remote file. UTF8 data
+is not supported unless a custom converter callback is used to
+transform it to bytes and the method will croak if it encounters any
+data in perl internal UTF8 format. Note also that the handle is not
+closed when the transmission finish.
 
 Example:
 
@@ -3620,9 +3621,8 @@ argument is used as its textual value.
 
 =item $sftp-E<gt>ls($remote, %opts)
 
-Fetches a directory listing of the remote B<directory> C<$remote>. If
-C<$remote> is not given, the remote current working directory is
-listed.
+Fetches a listing of the remote directory C<$remote>. If C<$remote> is
+not given, the current remote working directory is listed.
 
 Returns a reference to a list of entries. Every entry is a reference
 to a hash with three keys: C<filename>, the name of the entry;
@@ -3854,7 +3854,7 @@ sensitive fashion, this flag changes it to be case insensitive.
 
 by default, a dot character at the begining of a file or directory
 name is not matched by willcards (C<*> or C<?>). Setting this flags to
-a false value changes the behaviour.
+a false value changes this behaviour.
 
 =item follow_links =E<gt> 1
 
@@ -4051,9 +4051,9 @@ Sends the C<SSH_FXP_OPEN> command to open a remote file C<$path>,
 and returns an open handle on success. On failure returns
 C<undef>.
 
-The returned value is a tied handle that can be used to access the
-remote file both with the methods available from this module and with
-perl built-ins, for instance:
+The returned value is a tied handle (see L<Tie::Handle>) that can be
+used to access the remote file both with the methods available from
+this module and with perl built-ins. For instance:
 
   # reading from the remote file
   my $fh1 = $sftp->open("/etc/passwd")
@@ -4061,20 +4061,57 @@ perl built-ins, for instance:
   while (<$fh1>) { ... }
 
   # writting to the remote file
+  use Net::SFTP::Foreign::Constants qw(:flags);
   my $fh2 = $sftp->open("/foo/bar", SSH2_FXF_WRITE|SSH2_FXF_CREAT)
     or die $sftp->error;
   print $fh2 "printing on the remote file\n";
   $sftp->write($fh2, "writting more");
 
-C<$flags> should be a bitmask of open flags, whose values can
-be obtained from L<Net::SFTP::Foreign::Constants>:
+The C<$flags> bitmap determines how to open the remote file as defined
+in the SFTP protocol draft (the following constants can be imported
+from L<Net::SFTP::Foreign::Constants>):
 
-    use Net::SFTP::Foreign::Constants qw( :flags );
+=over 4
 
-C<$attrs> should be a L<Net::SFTP::Foreign::Attributes> object,
-specifying the initial attributes for the file C<$path>. If you're
-opening the file for reading only, C<$attrs> can be left blank, in
-which case it will be initialized to an empty set of attributes.
+=item SSH2_FXF_READ
+
+Open the file for reading. It is the default mode.
+
+=item SSH2_FXF_WRITE
+
+Open the file for writing.  If both this and C<SSH2_FXF_READ> are
+specified, the file is opened for both reading and writing.
+
+=item SSH2_FXF_APPEND
+
+Force all writes to append data at the end of the file.
+
+As OpenSSH SFTP server implementation ignores this flag, the module
+emulates it (I will appreciate receiving feedback about the
+interoperation of this module with other server implementations when
+this flag is used).
+
+=item SSH2_FXF_CREAT
+
+If this flag is specified, then a new file will be created if one does
+not already exist.
+
+=item SSH2_FXF_TRUNC
+
+Forces an existing file with the same name to be truncated to zero
+length when creating a file. C<SSH2_FXF_CREAT> must also be specified
+if this flag is used.
+
+=item SSH2_FXF_EXCL
+
+Causes the request to fail if the named file already exists.
+C<SSH2_FXF_CREAT> must also be specified if this flag is used.
+
+=back
+
+When creating a new remote file, C<$attrs> allows to set its initial
+attributes. C<$attrs> has to be an object of class
+L<Net::SFTP::Foreign::Attributes>.
 
 =item $sftp-E<gt>close($handle)
 
@@ -4351,17 +4388,17 @@ values:
 
 =item conversion =E<gt> 'dos2unix'
 
-converts LF+CR line endings (as commonly used under MS-DOS) to LF
+Converts LF+CR line endings (as commonly used under MS-DOS) to LF
 (Unix).
 
 =item conversion =E<gt> 'unix2dos'
 
-converts LF line endings (Unix) to LF+CR (DOS).
+Converts LF line endings (Unix) to LF+CR (DOS).
 
 =item conversion =E<gt> sub { CONVERT $_[0] }
 
-when a callback is given, it is called repeatly as chunks of data
-become available and it has to change C<$_[0]> in place in order to
+When a callback is given, it is called repeatly as chunks of data
+become available. It has to change C<$_[0]> in place in order to
 perform the conversion.
 
 Also, the subroutine is called one last time with and empty data
@@ -4377,10 +4414,10 @@ The data conversion is always performed before any other callback
 subroutine is called.
 
 See the Wikipedia entry on line endings
-L<http://en.wikipedia.org/wiki/Newline> or the article
-L<Understanding
-Newlines|http://www.onlamp.com/pub/a/onlamp/2006/08/17/understanding-newlines.html>
-by Xavier Noria for details about the different conventions.
+L<http://en.wikipedia.org/wiki/Newline> or the article Understanding
+Newlines by Xavier Noria
+(L<http://www.onlamp.com/pub/a/onlamp/2006/08/17/understanding-newlines.html>)
+for details about the different conventions.
 
 =head1 FAQ
 
@@ -4411,57 +4448,6 @@ hardcode the location of C<ssh> inside your script, for instance:
 
   my $ssh = Net::SFTP::Foreign->new($host,
                                     ssh_cmd => '/usr/local/ssh/bin/ssh');
-
-=item Login/password authentication:
-
-B<Q>: I noticed that the examples/synopsis that is provided has no
-mention of using a password to login. How is one, able to login to a
-SFTP server that requires uid/passwd for login?
-
-B<A>: You can't!... well, actually, now, you can!
-
-Use the C<password> option when calling the constructor:
-
-  my $sftp = Net::SFTP::Foreign->new('foo@host', password => $password);
-
-It will use L<Expect> to log into the remote machine after the SSH
-connection is stablished, though as the prompt used by SSH to ask for
-the password can be customized, it is not gauranteed to work.
-
-You can also handle the connection and login yourself with L<Expect>
-or any other way, and then call the constructor with the C<transport>
-option:
-
-  use Expect;
-
-  my $conn = Expect->new;
-  $conn->raw_pty(1);
-  $conn->log_user(0);
-
-  $conn->spawn('/usr/bin/ssh', -l => $user, $host, -s => 'sftp')
-      or die $errstr;
-
-  $conn->expect($timeout, "Password:")
-      or die "Password not requested as expected";
-  $conn->send("$passwd\n");
-  $conn->expect($timeout, "\n");
-
-  my $sftp = Net::SFTP::Foreign->new(transport => $conn);
-  die "unable to stablish SSH connection: ". $sftp->error
-      if $sftp->error;
-
-(full example code is available from the C<samples> directory in this
-package)
-
-Anyway, I highly discourage this practice. You better use public-key
-authentication instead!
-
-=item Using passphrase protected keys:
-
-B<Q>: How can I use keys protected by a passphrase?
-
-B<A>: You can't ... well, ok, see answer to previous question. The
-constructor also supports a C<passphrase> option.
 
 =item C<more> constructor option expects an array reference:
 
@@ -4541,7 +4527,7 @@ new method as follows:
 
 See L<ssh_config(5)> for the details.
 
-=item understanding C<<$attr->perm>> bits
+=item understanding C<$attr-E<gt>perm> bits
 
 B<Q>: How can I know if a directory entry is a (directory|link|file|...)?
 

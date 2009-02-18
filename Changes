@@ -1,13 +1,19 @@
 Revision history for Net::SFTP::Foreign
 
-1.48_02  Feb 16, 2009
+1.48_03  Feb 18, 2009
+	- use utf8::downgrade to handle data with may have its utf8
+          flag set (bug report by Jamie Lahowetz, solution by ikegami)
+	- emulate SSH2_FXF_APPEND mode not supported by OpenSSH SFTP
+          server
+	- open flags documented
+	- minor documentation corrections
 	- follow_links option from find method was broken (bug report
           by Paul Kolano)
 	- spurious debugging message removed from statvfs
         - put and get now accept a file handle instead of a file name
           for the local file (feature request by David Morel)
         - add support for append option in put and get
-	- put documentation reorganized
+	- put and get documentation reorganized
 	- improve write caching behavior, '_write_delay' is used to
           control the write buffer size (feature request by David
           Morel)
