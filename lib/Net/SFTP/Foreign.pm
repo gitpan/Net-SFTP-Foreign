@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.48_03';
+our $VERSION = '1.49';
 
 use strict;
 use warnings;
@@ -605,9 +605,11 @@ sub _check_extension {
 
 sub _rel2abs {
     my ($sftp, $path) = @_;
-    if (defined $sftp->{cwd} and $path !~/^\//) {
+    my $cwd = $sftp->{cwd};
+    if (defined $cwd and $path !~ m|^/|) {
         # carp "sftp->rel2abs($path) => $sftp->{cwd}/$path\n";
-        return "$sftp->{cwd}/$path"
+	$path =~ s|(?:\./)+||;
+	return ($cwd =~ m|/$| ? "$cwd$path" : "$cwd/$path");
     }
     return $path
 }
@@ -775,8 +777,7 @@ sub open {
 
 ## SSH2_FXP_OPENDIR (11)
 sub opendir {
-    (@_ >= 2 and @_ <= 3)
-	or croak 'Usage: $sftp->opendir($path)';
+    @_ == 2 or croak 'Usage: $sftp->opendir($path)';
     ${^TAINT} and &_catch_tainted_args;
 
     my $sftp = shift;
@@ -1043,7 +1044,6 @@ sub _fill_read_cache {
 	    or last;
 
 	my $data = $msg->get_str;
-	
 	$$bin .= $data;
 	if (length $data < $bsize) {
 	    unless (defined $len) {

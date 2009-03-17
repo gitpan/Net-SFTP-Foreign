@@ -10,6 +10,11 @@ TODO
 
 - add support for encodings
 
+- improve password login, remove Expect dependency and try to backport
+  as much as possible fron Net::OpenSSH
+
+- detect unknown host key checking
+
 DONE
 ==== 
 

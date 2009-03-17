@@ -1,6 +1,10 @@
 Revision history for Net::SFTP::Foreign
 
-1.48_03  Feb 18, 2009
+1.49  Mar 17, 2009
+	- rel2abs was not collapsing duplicated slashes when joining
+          paths, generating paths as '//home' that have an unexpected
+          meaning under Windows (bug report and solution by Erik
+          Weidel)
 	- use utf8::downgrade to handle data with may have its utf8
           flag set (bug report by Jamie Lahowetz, solution by ikegami)
 	- emulate SSH2_FXF_APPEND mode not supported by OpenSSH SFTP
