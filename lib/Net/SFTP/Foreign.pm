@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.49';
+our $VERSION = '1.50';
 
 use strict;
 use warnings;
@@ -608,7 +608,7 @@ sub _rel2abs {
     my $cwd = $sftp->{cwd};
     if (defined $cwd and $path !~ m|^/|) {
         # carp "sftp->rel2abs($path) => $sftp->{cwd}/$path\n";
-	$path =~ s|(?:\./)+||;
+	$path =~ s|^(?:\./+)+||;
 	return ($cwd =~ m|/$| ? "$cwd$path" : "$cwd/$path");
     }
     return $path
