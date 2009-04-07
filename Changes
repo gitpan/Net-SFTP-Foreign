@@ -1,5 +1,10 @@
 Revision history for Net::SFTP::Foreign
 
+1.51  Apr 7, 2009
+        - "get" corrupted the fetched files if $\ was non empty (bug
+          report and solution by Dagfinn Ilmari Mannsaker)
+	- increment default packet and queue size
+
 1.50  Mar 18, 2009
 	- rel2abs was not collapsing duplicated slashes when joining
           paths, generating paths as '//home' that have an unexpected

@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.50';
+our $VERSION = '1.51';
 
 use strict;
 use warnings;
@@ -46,6 +46,7 @@ sub _hexdump {
         my @c= (( map { sprintf "%02x",$_ } unpack('C*', $line)),
                 (("  ") x 32))[0..31];
         $line=~s/(.)/ my $c=$1; unpack("c",$c)>=32 ? $c : '.' /egms;
+	local $\;
         print STDERR join(" ", @c, '|', $line), "\n";
     }
 }
@@ -61,8 +62,8 @@ use Net::SFTP::Foreign::Common;
 our @ISA = qw(Net::SFTP::Foreign::Common);
 
 
-use constant DEFAULT_BLOCK_SIZE => 16384;
-use constant DEFAULT_QUEUE_SIZE => ($windows ? 4 : 10);
+use constant DEFAULT_BLOCK_SIZE => 32768;
+use constant DEFAULT_QUEUE_SIZE => ($windows ? 4 : 32);
 
 sub _next_msg_id { shift->{_msg_id}++ }
 
@@ -1726,6 +1727,7 @@ sub get {
     my $adjustment = 0;
     my $selin = '';
     my $n = 0;
+    local $\;
 
     vec ($selin, $rfno, 1) = 1;
 

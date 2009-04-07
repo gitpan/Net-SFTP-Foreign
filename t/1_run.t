@@ -70,6 +70,9 @@ for my $setcwd (0, 1) {
     my $drdir = File::Spec->catdir($rcwd, 'testdir');
 
     for my $i (1..8) {
+
+	local $\ = ($i == 4 ? "-bad-" : undef);
+
         mktestfile($dlfn, $i * 4000,
                    "this is just testing data... foo bar doz wahtever... ");
 

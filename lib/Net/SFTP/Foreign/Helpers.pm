@@ -26,6 +26,7 @@ our @EXPORT = qw( _do_nothing
 sub _do_nothing {}
 
 sub _debug {
+    local $\;
     if ($Net::SFTP::Foreign::debug & 256) {
         print STDERR "#", $$, " ", @_,"\n"
     }
