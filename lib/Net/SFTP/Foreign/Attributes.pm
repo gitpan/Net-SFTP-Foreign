@@ -33,33 +33,57 @@ sub new_from_buffer {
     my ($class, $buf) = @_;
     my $self = $class->new;
 
-    $self->{flags} = $buf->get_int32;
+    $self->{flags} = my($flags) = $buf->get_int32;
 
-    if ($self->{flags} & SSH2_FILEXFER_ATTR_SIZE) {
+
+    if ($flags & SSH2_FILEXFER_ATTR_SIZE) {
 	$self->{size} = $buf->get_int64;
     }
 
-    if ($self->{flags} & SSH2_FILEXFER_ATTR_UIDGID) {
+    if ($flags & SSH2_FILEXFER_ATTR_UIDGID) {
 	$self->{uid} = $buf->get_int32;
 	$self->{gid} = $buf->get_int32;
     }
 
-    if ($self->{flags} & SSH2_FILEXFER_ATTR_PERMISSIONS) {
+    if ($flags & SSH2_FILEXFER_ATTR_PERMISSIONS) {
 	$self->{perm} = $buf->get_int32;
     }
 
-    if ($self->{flags} & SSH2_FILEXFER_ATTR_ACMODTIME) {
+    if ($flags & SSH2_FILEXFER_ATTR_ACMODTIME) {
 	$self->{atime} = $buf->get_int32;
 	$self->{mtime} = $buf->get_int32;
     }
 
-    if ($self->{flags} & SSH2_FILEXFER_ATTR_EXTENDED) {
+    if ($flags & SSH2_FILEXFER_ATTR_EXTENDED) {
         my $n = $buf->get_int32;
         my @pairs = map $buf->get_str, 1..2*$n;
         $self->{extended} = \@pairs;
     }
 
     $self;
+}
+
+sub skip_from_buffer {
+    my ($class, $buf) = @_;
+    my $flags = $buf->get_int32;
+    if ($flags == ( SSH2_FILEXFER_ATTR_SIZE |
+		    SSH2_FILEXFER_ATTR_UIDGID |
+		    SSH2_FILEXFER_ATTR_PERMISSIONS |
+		    SSH2_FILEXFER_ATTR_ACMODTIME )) {
+	$buf->skip_bytes(28);
+    }
+    else {
+	my $len = 0;
+	$len += 8 if $flags & SSH2_FILEXFER_ATTR_SIZE;
+	$len += 8 if $flags & SSH2_FILEXFER_ATTR_UIDGID;
+	$len += 4 if $flags & SSH2_FILEXFER_ATTR_PERMISSIONS;
+	$len += 8 if $flags & SSH2_FILEXFER_ATTR_ACMODTIME;
+	$buf->skip_bytes($len);
+	if ($flags & SSH2_FILEXFER_ATTR_EXTENDED) {
+	    my $n = $buf->get_int32;
+	    $buf->skip_str, $buf->skip_str for (1..$n);
+	}
+    }
 }
 
 sub as_buffer {

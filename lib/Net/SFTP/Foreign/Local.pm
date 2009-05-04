@@ -8,12 +8,8 @@ use Carp;
 use File::Spec;
 
 use Net::SFTP::Foreign::Attributes;
-use Net::SFTP::Foreign::Constants qw( :error );
-
-use Net::SFTP::Foreign::Helpers qw( _sort_entries
-				    _gen_wanted
-				    _do_nothing );
-
+use Net::SFTP::Foreign::Constants qw(:error);
+use Net::SFTP::Foreign::Helpers qw(_sort_entries _gen_wanted _do_nothing);
 use Net::SFTP::Foreign::Common;
 our @ISA = qw(Net::SFTP::Foreign::Common);
 

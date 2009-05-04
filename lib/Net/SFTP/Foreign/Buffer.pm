@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign::Buffer;
 
-our $VERSION = '1.45';
+our $VERSION = '1.52';
 
 use strict;
 use warnings;
@@ -75,6 +75,14 @@ sub get_str {
 sub get_attributes { Net::SFTP::Foreign::Attributes->new_from_buffer($_[0]) }
 
 
+sub skip_bytes { substr(${$_[0]}, 0, $_[1], '') }
+
+sub skip_str {
+    my $self = shift;
+    my $len = $self->get_int32;
+    substr($$self, 0, $len, '');
+}
+
 sub put_int8 { ${$_[0]} .= pack(C => $_[1]) }
 
 sub put_int32 { ${$_[0]} .= pack(N => $_[1]) }
@@ -96,13 +104,22 @@ sub put_int64 {
 }
 
 sub put_str {
-    utf8::is_utf8($_[1]) and croak "UTF8 data reached the SFTP buffer";
+    utf8::downgrade($_[1]) or croak "UTF8 data reached the SFTP buffer";
     ${$_[0]} .= pack(N => length($_[1])) . $_[1]
 }
 
 sub put_char { ${$_[0]} .= $_[1] }
 
-sub put_attributes { ${$_[0]} .= ${$_[0]->as_buffer} }
+sub _attrs_as_buffer {
+    my $attrs = shift;
+    my $ref = ref $attrs;
+    Net::SFTP::Foreign::Attributes->isa($ref)
+	    or croak("Object of class Net::SFTP::Foreign::Attributes "
+		     . "expected, $ref found");
+    $attrs->as_buffer;
+}
+
+sub put_attributes { ${$_[0]} .= ${_attrs_as_buffer $_[1]} }
 
 my %unpack = ( int8 => \&get_int8,
 	       int32 => \&get_int32,
@@ -134,7 +151,7 @@ my %pack = ( int8 => sub { pack C => $_[0] },
 	     },
 	     str => sub { pack(N => length($_[0])), $_[0] },
 	     char => sub { $_[0] },
-	     attr => sub { ${$_[0]->as_buffer} } );
+	     attr => sub { ${_attrs_as_buffer $_[0]} } );
 
 sub put {
     my $buf =shift;

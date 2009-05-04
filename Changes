@@ -1,5 +1,18 @@
 Revision history for Net::SFTP::Foreign
 
+1.52_03  May 4, 2009
+	- add debug hexdumps for sysreads and syswrites
+	- optimize some common ls usages to reduce CPU usage
+	- implement pipelining for ls command
+	- ls bug wanted was being called with the wrong arguments 
+	- add timestamps to debugging output 
+	- ensure that attribute arguments are of class
+          Net::SFTP::Foreign::Attributes (feature request by Todd
+          Rinaldo)
+        - put_attributes was broken
+	- move _hexdump to Helpers package
+	- debug subsystem cleanup
+
 1.51  Apr 7, 2009
         - "get" corrupted the fetched files if $\ was non empty (bug
           report and solution by Dagfinn Ilmari Mannsaker)

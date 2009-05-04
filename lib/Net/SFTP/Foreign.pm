@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.51';
+our $VERSION = '1.52_03';
 
 use strict;
 use warnings;
@@ -26,7 +26,20 @@ BEGIN {
     }
 }
 
+# we make $Net::SFTP::Foreign::Helpers::debug an alias for
+# $Net::SFTP::Foreign::debug so that the user can set it without
+# knowing anything about the Helpers package!
 our $debug;
+BEGIN { *Net::SFTP::Foreign::Helpers::debug = \$debug };
+use Net::SFTP::Foreign::Helpers;
+use Net::SFTP::Foreign::Constants qw( :fxp :flags :att
+				      :status :error
+				      SSH2_FILEXFER_VERSION );
+use Net::SFTP::Foreign::Attributes;
+use Net::SFTP::Foreign::Buffer;
+use Net::SFTP::Foreign::Common;
+our @ISA = qw(Net::SFTP::Foreign::Common);
+
 our $dirty_cleanup;
 my $windows;
 
@@ -37,30 +50,6 @@ BEGIN {
 	$dirty_cleanup = 1 unless defined $dirty_cleanup;
     }
 }
-
-sub _hexdump {
-    no warnings qw(uninitialized);
-    my $data = shift;
-    while ($data =~ /(.{1,32})/smg) {
-        my $line=$1;
-        my @c= (( map { sprintf "%02x",$_ } unpack('C*', $line)),
-                (("  ") x 32))[0..31];
-        $line=~s/(.)/ my $c=$1; unpack("c",$c)>=32 ? $c : '.' /egms;
-	local $\;
-        print STDERR join(" ", @c, '|', $line), "\n";
-    }
-}
-
-use Net::SFTP::Foreign::Constants qw( :fxp :flags :att
-				      :status :error
-				      SSH2_FILEXFER_VERSION );
-use Net::SFTP::Foreign::Attributes;
-use Net::SFTP::Foreign::Buffer;
-use Net::SFTP::Foreign::Helpers;
-
-use Net::SFTP::Foreign::Common;
-our @ISA = qw(Net::SFTP::Foreign::Common);
-
 
 use constant DEFAULT_BLOCK_SIZE => 32768;
 use constant DEFAULT_QUEUE_SIZE => ($windows ? 4 : 32);
@@ -89,7 +78,7 @@ sub _queue_msg {
 	_debug(sprintf("queueing msg len: %i, code:%i, id:%i ... [$sftp->{_queued}]",
 		       $len, unpack(CN => $bytes)));
 
-        ($debug & 16) and _hexdump(pack('N', length($bytes)) . $bytes);
+        $debug & 16 and _hexdump(pack('N', length($bytes)) . $bytes);
     }
 
     $sftp->{_bout} .= pack('N', length($bytes));
@@ -129,17 +118,21 @@ sub _do_io_unix {
 
     local $SIG{PIPE} = 'IGNORE';
 
+    my $len;
     while (1) {
         my $lbin = length $$bin;
-        if ($lbin >= 4) {
-            my $len = 4 + unpack N => $$bin;
+	if (defined $len) {
             return 1 if $lbin >= $len;
+	}
+	elsif ($lbin >= 4) {
+            $len = 4 + unpack N => $$bin;
             if ($len > 256 * 1024) {
                 $sftp->_set_status(SSH2_FX_BAD_MESSAGE);
                 $sftp->_set_error(SFTP_ERR_REMOTE_BAD_MESSAGE,
                                   "bad remote message received");
                 return undef;
             }
+            return 1 if $lbin >= $len;
         }
 
         my $rv1 = $rv;
@@ -150,11 +143,14 @@ sub _do_io_unix {
         my $n = select($rv1, $wv1, undef, $timeout);
         if ($n > 0) {
             if (vec($wv1, $fnoout, 1)) {
-                my $written = syswrite($sftp->{ssh_out}, $$bout, 20480);
-                $debug and $debug & 32 and _debug (sprintf "_do_io write queue: %d, syswrite: %s, max: %d",
-                                                   length $$bout,
-                                                   (defined $written ? $written : 'undef'),
-                                                   20480);
+                my $written = syswrite($sftp->{ssh_out}, $$bout, 64 * 1024);
+                if ($debug and $debug & 32) {
+		    _debug (sprintf "_do_io write queue: %d, syswrite: %s, max: %d",
+			    length $$bout,
+			    (defined $written ? $written : 'undef'),
+			    20480);
+		    $debug & 2048 and $written and _hexdump(substr($$bout, 0, $written));
+		}
                 unless ($written) {
                     $sftp->_conn_lost;
                     return undef;
@@ -162,10 +158,13 @@ sub _do_io_unix {
                 substr($$bout, 0, $written, '');
             }
             if (vec($rv1, $fnoin, 1)) {
-                my $read = sysread($sftp->{ssh_in}, $$bin, 20480, length($$bin));
-                $debug and $debug & 32 and _debug (sprintf "_do_io read sysread: %s, total read: %d",
-                                                   (defined $read ? $read : 'undef'),
-                                                   length $sftp->{_bin});
+                my $read = sysread($sftp->{ssh_in}, $$bin, 64 * 1024, length($$bin));
+                if ($debug and $debug & 32) {
+		    _debug (sprintf "_do_io read sysread: %s, total read: %d",
+			    (defined $read ? $read : 'undef'),
+			    length $$bin);
+		    $debug & 1024 and $read and _hexdump(substr($$bin, -$read));
+		}
                 unless ($read) {
                     $sftp->_conn_lost;
                     return undef;
@@ -252,7 +251,7 @@ sub _get_msg {
         $status = '-' unless $code == SSH2_FXP_STATUS;
 	_debug(sprintf("got it!, len:%i, code:%i, id:%i, status: %s",
                        $len, $code, $id, $status));
-        ($debug & 8) and _hexdump($$msg);
+        $debug & 8 and _hexdump($$msg);
     }
 
     return $msg;
@@ -499,7 +498,7 @@ sub disconnect {
     my $sftp = shift;
     my $pid = $sftp->{pid};
 
-    $debug and $debug & 4 and Net::SFTP::Foreign::_debug("$sftp->disconnect called (ssh pid: ".($pid||'').")");
+    $debug and $debug & 4 and _debug("$sftp->disconnect called (ssh pid: ".($pid||'').")");
 
     $sftp->_conn_lost;
 
@@ -559,7 +558,7 @@ sub DESTROY {
     my $sftp = shift;
     my $dbpid = $sftp->{_disconnect_by_pid};
 
-    $debug and $debug & 4 and Net::SFTP::Foreign::_debug("$sftp->DESTROY called (current pid: $$, disconnect_by_pid: ".($dbpid||'').")");
+    $debug and $debug & 4 and _debug("$sftp->DESTROY called (current pid: $$, disconnect_by_pid: ".($dbpid||'').")");
 
     $sftp->disconnect if (!defined $dbpid or $dbpid == $$);
 }
@@ -2208,11 +2207,20 @@ sub ls {
     my $atomic_readdir = delete $opts{atomic_readdir};
     my $names_only = delete $opts{names_only};
     my $realpath = delete $opts{realpath};
+    my $queue_size = delete $opts{queue_size};
     my $wanted = delete $opts{_wanted} ||
 	_gen_wanted(delete $opts{wanted},
 		    delete $opts{no_wanted});
 
     %opts and _croak_bad_options(keys %opts);
+
+    my $delayed_wanted = ($atomic_readdir and $wanted);
+    $queue_size = 1 if ($follow_links or $realpath or
+			($wanted and not $delayed_wanted));
+    my $max_queue_size = $queue_size || $sftp->{_queue_size};
+    $queue_size ||= 2;
+
+    my $cheap = ($names_only and !$wanted and !$realpath); 
 
     $dir = '.' unless defined $dir;
     $dir = $sftp->_rel2abs($dir);
@@ -2224,54 +2232,70 @@ sub ls {
     defined $rdid or return undef;
 
     my @dir;
-    OK: while (1) {
-        my $id = $sftp->_queue_str_request(SSH2_FXP_READDIR, $rdid);
+    my @msgid;
 
+    OK: while (1) {
+	push @msgid, $sftp->_queue_str_request(SSH2_FXP_READDIR, $rdid)
+	    while (@msgid < $queue_size);
+
+	my $id = shift @msgid;
 	if (my $msg = $sftp->_get_msg_and_check(SSH2_FXP_NAME, $id,
 						SFTP_ERR_REMOTE_READDIR_FAILED,
 						"Couldn't read directory '$dir'" )) {
 
 	    my $count = $msg->get_int32 or last;
 
-	    for (1..$count) {
-                my $fn = $sftp->_fs_decode($msg->get_str);
-                my $ln = $sftp->_fs_decode($msg->get_str); # 
-                my $a = $msg->get_attributes;
+	    if ($cheap) {
+		for (1..$count) {
+		    push @dir, $sftp->_fs_decode($msg->get_str);
+		    $msg->skip_str;
+		    Net::SFTP::Foreign::Attributes->skip_from_buffer($msg);
+		}
+	    }
+	    else {
+		for (1..$count) {
+		    my $fn = $sftp->_fs_decode($msg->get_str);
+		    my $ln = $sftp->_fs_decode($msg->get_str);
+		    # my $a = $msg->get_attributes;
+		    my $a = Net::SFTP::Foreign::Attributes->new_from_buffer($msg);
 
-		my $entry =  { filename => $fn,
-			       longname => $ln,
-			       a => $a };
+		    my $entry =  { filename => $fn,
+				   longname => $ln,
+				   a => $a };
 
-		if ($follow_links and S_ISLNK($a->perm)) {
+		    if ($follow_links and S_ISLNK($a->perm)) {
 
-		    if ($a = $sftp->stat($sftp->join($dir, $fn))) {
-			$entry->{a} = $a;
+			if ($a = $sftp->stat($sftp->join($dir, $fn))) {
+			    $entry->{a} = $a;
+			}
+			else {
+			    $sftp->_set_error;
+			    $sftp->_set_status;
+			}
 		    }
-		    else {
-			$sftp->_set_error;
-			$sftp->_set_status;
+
+		    if ($realpath) {
+			my $rp = $sftp->realpath($fn);
+			if (defined $rp) {
+			    $fn = $entry->{realpath} = $rp;
+			}
+			else {
+			    $sftp->_set_error;
+			    $sftp->_set_status;
+			}
+		    }
+
+		    if (!$wanted or $delayed_wanted or $wanted->($sftp, $entry)) {
+			push @dir, (($names_only and !$delayed_wanted) ? $fn : $entry);
 		    }
 		}
+	    }
 
-
-                if ($realpath) {
-                    my $rp = $sftp->realpath($fn);
-                    if (defined $rp) {
-                        $fn = $entry->{realpath} = $rp;
-                    }
-                    else {
-			$sftp->_set_error;
-			$sftp->_set_status;
-                    }
-                }
-
-		if ($atomic_readdir or !$wanted or $wanted->($sftp, $entry)) {
-		    push @dir, ($names_only ? $fn : $entry);
-		}
-            }
+	    $queue_size ++ if $queue_size < $max_queue_size;
 	}
 	else {
 	    $sftp->_set_error if $sftp->{_status} == SSH2_FX_EOF;
+	    $sftp->_get_msg for @msgid;
 	    last;
 	}
     }
@@ -2279,10 +2303,14 @@ sub ls {
     $sftp->_closedir_save_status($rdh) if $rdh;
 
     unless ($sftp->{_error}) {
-	if ($atomic_readdir and $wanted) {
+	if ($delayed_wanted) {
 	    @dir = grep { $wanted->($sftp, $_) } @dir;
+	    @dir = map { defined $_->{realpath}
+			 ? $_->{realpath}
+			 : $_->{filename} } @dir
+		if $names_only;
 	}
-
+	
         if ($ordered) {
             if ($names_only) {
                 @dir = sort @dir;
@@ -3637,7 +3665,11 @@ permissions and size.
 
     print "$_->{filename}\n" for (@$ls);
 
-The options accepted by this method are:
+
+
+The options accepted by this method are as follows (note that usage of
+some of them can degrade the method performance when reading large
+directories):
 
 =over 4
 
@@ -3676,7 +3708,7 @@ those options have the oposite result to their C<wanted> counterparts:
 
 When both C<no_wanted> and C<wanted> rules are used, the C<no_wanted>
 rule is applied first and then the C<wanted> one (order is important
-if the callbacks have side effects).
+if the callbacks have side effects, experiment!).
 
 =item ordered =E<gt> 1
 

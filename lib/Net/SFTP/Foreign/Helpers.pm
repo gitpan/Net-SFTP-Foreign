@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign::Helpers;
 
-our $VERSION = '1.41';
+our $VERSION = '1.52';
 
 use strict;
 use warnings;
@@ -21,19 +21,42 @@ our @EXPORT = qw( _do_nothing
                   _catch_tainted_args
                   _debug
                   _gen_converter
+		  _hexdump
+		  $debug
                 );
 
-sub _do_nothing {}
+our $debug;
+
+BEGIN {
+    eval "use Time::HiRes 'time'"
+	if ($debug and $debug & 256)
+}
 
 sub _debug {
     local $\;
-    if ($Net::SFTP::Foreign::debug & 256) {
-        print STDERR "#", $$, " ", @_,"\n"
+    if ($debug and $debug & 256) {
+	my $ts = sprintf("%010.5f", time);
+        print STDERR "#$$ $ts ", @_,"\n"
     }
     else {
         print STDERR '# ', @_,"\n"
     }
 }
+
+sub _hexdump {
+    no warnings qw(uninitialized);
+    my $data = shift;
+    while ($data =~ /(.{1,32})/smg) {
+        my $line=$1;
+        my @c= (( map { sprintf "%02x",$_ } unpack('C*', $line)),
+                (("  ") x 32))[0..31];
+        $line=~s/(.)/ my $c=$1; unpack("c",$c)>=32 ? $c : '.' /egms;
+	local $\;
+        print STDERR join(" ", @c, '|', $line), "\n";
+    }
+}
+
+sub _do_nothing {}
 
 {
     my $has_sk;
@@ -203,10 +226,9 @@ sub _gen_dos2unix {
     my $done;
     sub {
         $done and die "Internal error: bad calling sequence for unix2dos transformation";
-        my $debug = ($Net::SFTP::Foreing::debug and $Net::SFTP::Foreing::debug & 128);
         my $adjustment = 0;
         for (@_) {
-            if ($debug) {
+            if ($debug and $debug & 128) {
                 _debug ("before dos2unixunix2dos: previous: $previous, data follows...");
                 _hexdump($_);
             }
@@ -224,7 +246,7 @@ sub _gen_dos2unix {
                 $adjustment++;
                 $_ = "\x0d";
             }
-            if ($debug) {
+            if ($debug and $debug & 128) {
                 _debug ("after dos2unix: previous: $previous, adjustment: $adjustment, data follows...");
                 _hexdump($_);
             }
@@ -234,13 +256,12 @@ sub _gen_dos2unix {
 }
 
 sub _unix2dos {
-    my $debug = ($Net::SFTP::Foreing::debug and $Net::SFTP::Foreing::debug & 128);
-    if ($debug) {
+    if ($debug and $debug & 128) {
         _debug ("before unix2dos: data follows...");
         _hexdump($_[0]);
     }
     my $adjustment = $_[0] =~ s/\x0a/\x0d\x0a/gs;
-    if ($debug) {
+    if ($debug and $debug & 128) {
         _debug ("before unix2dos: adjustment: $adjustment, data follows...");
         _hexdump($_[0]);
     }

@@ -8,7 +8,7 @@ use Carp;
 use Scalar::Util qw(dualvar tainted);
 use Fcntl qw(S_ISLNK S_ISDIR);
 
-use Net::SFTP::Foreign::Helpers qw(_gen_wanted _ensure_list _debug);
+use Net::SFTP::Foreign::Helpers qw(_gen_wanted _ensure_list _debug $debug);
 use Net::SFTP::Foreign::Constants qw(:status);
 
 my %status_str = ( SSH2_FX_OK, "OK",
@@ -21,7 +21,6 @@ my %status_str = ( SSH2_FX_OK, "OK",
 		   SSH2_FX_CONNECTION_LOST, "Connection lost",
 		   SSH2_FX_OP_UNSUPPORTED, "Operation unsupported" );
 
-*debug = \$Net::SFTP::Foreign::debug;
 our $debug;
 
 sub _set_status {
