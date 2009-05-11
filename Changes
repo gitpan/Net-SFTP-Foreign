@@ -1,6 +1,8 @@
 Revision history for Net::SFTP::Foreign
 
-1.52_05
+1.52_06 May 11, 2009
+	- Perl 5.11 changes the EOF call interface for tied file
+          handles
 	- Attributes flags slot was incorrectly set on new_from_buffer
 	- get/put_int64 optimization
 	- add calling function name to debug output

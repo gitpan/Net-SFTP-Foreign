@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.52_05';
+our $VERSION = '1.52_06';
 
 use strict;
 use warnings;
@@ -3049,8 +3049,16 @@ sub READ {
     undef;
 }
 
+sub EOF {
+    my $self = $_[0];
+    $self->_check or return undef;
+    my $sftp = $self->_sftp;
+    my $ret = $sftp->eof($self);
+    $sftp->_set_errno unless defined $ret;
+    $ret;
+}
+
 *GETC = $gen_proxy_method->('getc');
-*EOF = $gen_proxy_method->('eof');
 *TELL = $gen_proxy_method->('tell');
 *SEEK = $gen_proxy_method->('seek');
 *CLOSE = $gen_proxy_method->('close');
