@@ -38,30 +38,28 @@ sub get_int32 {
     unpack(N => substr(${$_[0]}, 0, 4, ''));
 }
 
-sub get_int64 {
-    my $self = shift;
-    length $$self >=8 or return undef;
-    if (HAS_QUADS) {
-	return unpack(Q => substr($$self, 0, 8, ''))
-    }
-    else {
-	my ($big, $small) = unpack(NN => substr($$self, 0, 8, ''));
-	if ($big) {
-	    # too big for an integer, try to handle it as a float:
-	    my $high = $big * 4294967296;
-	    my $result = $high + $small;
-            unless ($result - $high == $small) {
-                # too big event for a float, use a BigInt;
-                require Math::BigInt;
-                $result = Math::BigInt->new($big);
-                $result <<= 32;
-                $result += $small;
-            }
-	    return $result;
+sub get_int64_quads { unpack Q => substr(${$_[0]}, 0, 8, '') }
+
+sub get_int64_no_quads {
+    length ${$_[0]} >= 8 or return undef;
+    my ($big, $small) = unpack(NN => substr(${$_[0]}, 0, 8, ''));
+    if ($big) {
+	# too big for an integer, try to handle it as a float:
+	my $high = $big * 4294967296;
+	my $result = $high + $small;
+	unless ($result - $high == $small) {
+	    # too big event for a float, use a BigInt;
+	    require Math::BigInt;
+	    $result = Math::BigInt->new($big);
+	    $result <<= 32;
+	    $result += $small;
 	}
-	return $small;
+	return $result;
     }
+    return $small;
 }
+
+*get_int64 = (HAS_QUADS ? \&get_int64_quads : \&get_int64_no_quads);
 
 sub get_str {
     my $self = shift;
@@ -70,7 +68,6 @@ sub get_str {
     length $$self >=$len or return undef;
     substr($$self, 0, $len, '');
 }
-
 
 sub get_attributes { Net::SFTP::Foreign::Attributes->new_from_buffer($_[0]) }
 
@@ -87,21 +84,20 @@ sub put_int8 { ${$_[0]} .= pack(C => $_[1]) }
 
 sub put_int32 { ${$_[0]} .= pack(N => $_[1]) }
 
-sub put_int64 {
-    if (HAS_QUADS) {
-	${$_[0]} .= pack(Q => $_[1])
+sub put_int64_quads { ${$_[0]} .= pack(Q => $_[1]) }
+
+sub put_int64_no_quads {
+    if ($_[1] >= 4294967296) {
+	my $high = int ( $_[1] / 4294967296);
+	my $low = int ($_[1] - $high * 4294967296);
+	${$_[0]} .= pack(NN => $high, $low)
     }
     else {
-	if ($_[1] >= 4294967296) {
-	    my $high = int ( $_[1] / 4294967296);
-	    my $low = int ($_[1] - $high * 4294967296);
-	    ${$_[0]} .= pack(NN => $high, $low)
-	}
-	else {
-	    ${$_[0]} .= pack(NN => 0, $_[1])
-	}
+	${$_[0]} .= pack(NN => 0, $_[1])
     }
 }
+
+*put_int64 = (HAS_QUADS ? \&put_int64_quads : \&put_int64_no_quads);
 
 sub put_str {
     utf8::downgrade($_[1]) or croak "UTF8 data reached the SFTP buffer";

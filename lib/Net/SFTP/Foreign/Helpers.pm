@@ -34,12 +34,18 @@ BEGIN {
 
 sub _debug {
     local $\;
-    if ($debug and $debug & 256) {
+    my $caller = '';
+    if ( $debug & 8192) {
+	$caller = (caller 1)[3];
+	$caller =~ s/[\w:]*:://;
+	$caller .= ': ';
+    }
+    if ($debug & 256) {
 	my $ts = sprintf("%010.5f", time);
-        print STDERR "#$$ $ts ", @_,"\n"
+        print STDERR "#$$ $ts $caller", @_,"\n"
     }
     else {
-        print STDERR '# ', @_,"\n"
+        print STDERR '# $caller', @_,"\n"
     }
 }
 

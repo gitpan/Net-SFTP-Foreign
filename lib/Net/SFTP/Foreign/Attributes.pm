@@ -32,9 +32,7 @@ sub new_from_stat {
 sub new_from_buffer {
     my ($class, $buf) = @_;
     my $self = $class->new;
-
-    $self->{flags} = my($flags) = $buf->get_int32;
-
+    my $flags = $self->{flags} = $buf->get_int32;
 
     if ($flags & SSH2_FILEXFER_ATTR_SIZE) {
 	$self->{size} = $buf->get_int64;
@@ -56,6 +54,7 @@ sub new_from_buffer {
 
     if ($flags & SSH2_FILEXFER_ATTR_EXTENDED) {
         my $n = $buf->get_int32;
+	$n >= 0 and $n <= 10000 or return undef;
         my @pairs = map $buf->get_str, 1..2*$n;
         $self->{extended} = \@pairs;
     }

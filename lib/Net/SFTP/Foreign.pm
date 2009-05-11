@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.52_03';
+our $VERSION = '1.52_05';
 
 use strict;
 use warnings;
@@ -148,7 +148,7 @@ sub _do_io_unix {
 		    _debug (sprintf "_do_io write queue: %d, syswrite: %s, max: %d",
 			    length $$bout,
 			    (defined $written ? $written : 'undef'),
-			    20480);
+			    64 * 1024);
 		    $debug & 2048 and $written and _hexdump(substr($$bout, 0, $written));
 		}
                 unless ($written) {
@@ -248,8 +248,9 @@ sub _get_msg {
     if ($debug and $debug & 1) {
 	$sftp->{_queued}--;
         my ($code, $id, $status) = unpack( CNN => $$msg);
+	$id = '-' if $code == SSH2_FXP_VERSION;
         $status = '-' unless $code == SSH2_FXP_STATUS;
-	_debug(sprintf("got it!, len:%i, code:%i, id:%i, status: %s",
+	_debug(sprintf("got it!, len:%i, code:%i, id:%s, status: %s",
                        $len, $code, $id, $status));
         $debug & 8 and _hexdump($$msg);
     }
@@ -1314,7 +1315,7 @@ sub _close {
                                      "Couldn't close remote file");
 
     if ($debug and $debug & 2) {
-        _debug("closing file handle, return: $ok, rid:");
+        _debug sprintf("closing file handle, return: %s, rid:", (defined $ok ? $ok : '-'));
         _hexdump($sftp->_rid($_[0]));
     }
 
@@ -2208,9 +2209,19 @@ sub ls {
     my $names_only = delete $opts{names_only};
     my $realpath = delete $opts{realpath};
     my $queue_size = delete $opts{queue_size};
-    my $wanted = delete $opts{_wanted} ||
-	_gen_wanted(delete $opts{wanted},
-		    delete $opts{no_wanted});
+    my $cheap = ($names_only and !$realpath); 
+    my ($cheap_wanted, $wanted);
+    if ($cheap and
+	ref $opts{wanted} eq 'RegExp' and 
+	not defined $opts{no_wanted}) {
+	$cheap_wanted = delete $opts{wanted}
+    }
+    else {
+	$wanted = (delete $opts{_wanted} ||
+		   _gen_wanted(delete $opts{wanted},
+			       delete $opts{no_wanted}));
+	undef $cheap if defined $wanted;
+    }
 
     %opts and _croak_bad_options(keys %opts);
 
@@ -2219,8 +2230,6 @@ sub ls {
 			($wanted and not $delayed_wanted));
     my $max_queue_size = $queue_size || $sftp->{_queue_size};
     $queue_size ||= 2;
-
-    my $cheap = ($names_only and !$wanted and !$realpath); 
 
     $dir = '.' unless defined $dir;
     $dir = $sftp->_rel2abs($dir);
@@ -2247,7 +2256,8 @@ sub ls {
 
 	    if ($cheap) {
 		for (1..$count) {
-		    push @dir, $sftp->_fs_decode($msg->get_str);
+		    my $fn = $sftp->_fs_decode($msg->get_str);
+		    push @dir, $fn if (!defined $cheap_wanted or $fn =~ $cheap_wanted);
 		    $msg->skip_str;
 		    Net::SFTP::Foreign::Attributes->skip_from_buffer($msg);
 		}

@@ -1,8 +1,11 @@
 Revision history for Net::SFTP::Foreign
 
-1.52_03  May 4, 2009
+1.52_05
+	- Attributes flags slot was incorrectly set on new_from_buffer
+	- get/put_int64 optimization
+	- add calling function name to debug output
 	- add debug hexdumps for sysreads and syswrites
-	- optimize some common ls usages to reduce CPU usage
+	- optimize some common ls usages to reduce CPU utilization
 	- implement pipelining for ls command
 	- ls bug wanted was being called with the wrong arguments 
 	- add timestamps to debugging output 
