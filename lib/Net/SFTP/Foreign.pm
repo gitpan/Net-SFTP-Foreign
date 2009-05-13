@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.52_06';
+our $VERSION = '1.52_07';
 
 use strict;
 use warnings;
@@ -1491,8 +1491,8 @@ sub atomic_rename {
     my ($sftp, $old, $new) = @_;
 
     $sftp->_check_extension('posix-rename@openssh.com' => 1,
-                            SFTP_ERR_REMOTE_FSTATVFS_FAILED,
-                            "fstatvfs failed")
+                             SFTP_ERR_REMOTE_RENAME_FAILED,
+                            "atomic rename failed")
         or return undef;
 
     $old = $sftp->_rel2abs($old);
