@@ -1,6 +1,8 @@
 Revision history for Net::SFTP::Foreign
 
-1.52_07 May 13, 2009
+1.52_08 May 13, 2009
+	- detect bad passwords and other password authentication
+          improvements
 	- sample scripts added
 	- atomic_rename was returning the wrong error code/string
 	- Perl 5.11 changes the EOF call interface for tied file

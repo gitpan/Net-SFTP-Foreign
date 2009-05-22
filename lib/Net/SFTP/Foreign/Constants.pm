@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign::Constants;
 
-our $VERSION = '1.30';
+our $VERSION = '1.52';
 
 use strict;
 use warnings;
@@ -116,6 +116,7 @@ BEGIN {
                       SFTP_ERR_LOCAL_SEEK_FAILED => 47,
                       SFTP_ERR_REMOTE_STATVFS_FAILED => 48,
                       SFTP_ERR_REMOTE_FSTATVFS_FAILED => 49,
+		      SFTP_ERR_PASSWORD_AUTHENTICATION_FAILED => 50,
                     );
 
     for my $key (keys %constants) {

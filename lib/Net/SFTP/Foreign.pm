@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.52_07';
+our $VERSION = '1.52_08';
 
 use strict;
 use warnings;
@@ -337,6 +337,7 @@ sub new {
         }
         else {
             $pass = delete $opts{password};
+	    defined $pass and $sftp->{_password_authentication} = 1;
         }
 
         $expect_log_user = delete $opts{expect_log_user} || 0;
@@ -375,6 +376,8 @@ sub new {
             }
             elsif ($ssh_cmd_interface eq 'ssh') {
                 push @open2_cmd, -p => $port if defined $port;
+		push @open2_cmd, -o => 'NumberOfPasswordPrompts=1'
+		    if $pass and !$passphrase;
             }
             else {
                 die "Unsupported ssh_cmd_interface '$ssh_cmd_interface'";
@@ -447,6 +450,7 @@ sub new {
                 return $sftp;
             }
             $expect->send("$pass\n");
+	    $sftp->{_password_sent} = 1;
 
             unless ($expect->expect($eto, "\n")) {
                 $sftp->_conn_failed("$name interchange did not complete", $expect->error);
@@ -588,6 +592,12 @@ sub _init {
 	$sftp->_conn_lost(SSH2_FX_BAD_MESSAGE,
 			  SFTP_ERR_REMOTE_BAD_MESSAGE,
 			  "bad packet type, expecting SSH2_FXP_VERSION, got $type");
+    }
+    elsif ($sftp->status == SSH2_FX_CONNECTION_LOST
+	   and $sftp->{_password_authentication}
+	   and $sftp->{_password_sent}) {
+	$sftp->_set_error(SFTP_ERR_PASSWORD_AUTHENTICATION_FAILED,
+			  "Password authentication failed or connection lost");
     }
     return undef;
 }
