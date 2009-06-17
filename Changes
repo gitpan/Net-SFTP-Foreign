@@ -1,6 +1,9 @@
 Revision history for Net::SFTP::Foreign
 
-1.52_08 May 13, 2009
+1.52_09  Jun 17, 2009
+	- find method would not follow links passed as arguements to
+          the method or other found when ordered mode was selected
+          (bug report by Paul Kolano)
 	- detect bad passwords and other password authentication
           improvements
 	- sample scripts added

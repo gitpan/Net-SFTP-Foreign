@@ -158,7 +158,7 @@ sub find {
                     next unless (defined $rp and not $rpdone{$rp}++);
 		}
 	    }
-		
+
 	    if ($follow) {
                 my $a = $self->stat($fn);
                 if (defined $a) {
@@ -168,7 +168,7 @@ sub find {
                 }
 		next;
 	    }
-		
+
 	    if (!$wanted or $wanted->($self, $entry)) {
 		if ($wantarray) {
                     push @res, ( $names_only
@@ -192,10 +192,11 @@ sub find {
 	no warnings 'uninitialized';
 	$try = shift @queue;
 	my $fn = $try->{filename};
-	next if $done{$fn}++;
 
 	my $a = $try->{a} ||= $self->lstat($fn)
 	    or next;
+
+	next if (S_ISDIR($a->perm) and $done{$fn}++);
 
 	$task->($try);
 
