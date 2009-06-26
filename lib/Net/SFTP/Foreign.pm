@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.52_09';
+our $VERSION = '1.52_10';
 
 use strict;
 use warnings;
@@ -422,22 +422,35 @@ sub new {
             my $name = $passphrase ? 'Passphrase' : 'Password';
             my $eto = $sftp->{_timeout} ? $sftp->{_timeout} * 4 : 120;
 
-            my $pty = IO::Pty->new;
-            my $expect = Expect->init($pty);
-            $expect->raw_pty(1);
-            $expect->log_user($expect_log_user);
+	    my $child;
+	    my $expect;
+	    if (eval $IPC::Open3::VERSION >= 1.0105) {
+		# open2(..., '-') only works from this IPC::Open3 version upwards;
+		my $pty = IO::Pty->new;
+		$expect = Expect->init($pty);
+		$expect->raw_pty(1);
+		$expect->log_user($expect_log_user);
 
-            my $child = do {
-                local ($@, $SIG{__DIE__}, $SIG{__WARN__});
-                eval { open2($sftp->{ssh_in}, $sftp->{ssh_out}, '-') }
-            };
-            if (defined $child and !$child) {
-                $pty->make_slave_controlling_terminal;
-                do { exec @open2_cmd }; # work around suppress warning under mod_perl
-                exit -1;
-            }
-            _ipc_open2_bug_workaround $this_pid;
-
+		$child = do {
+		    local ($@, $SIG{__DIE__}, $SIG{__WARN__});
+		    eval { open2($sftp->{ssh_in}, $sftp->{ssh_out}, '-') }
+		};
+		if (defined $child and !$child) {
+		    $pty->make_slave_controlling_terminal;
+		    do { exec @open2_cmd }; # work around suppress warning under mod_perl
+		    exit -1;
+		}
+		_ipc_open2_bug_workaround $this_pid;
+	    }
+	    else {
+		$expect = Expect->new;
+		$expect->raw_pty(1);
+		$expect->log_user($expect_log_user);
+		$expect->spawn(@open2_cmd);
+		$sftp->{ssh_in} = $sftp->{ssh_out} = $expect;
+		$sftp->{_ssh_out_is_not_dupped} = 1;
+		$child = $expect->pid;
+	    }
             unless (defined $child) {
                 $sftp->_conn_failed("Bad ssh command", $!);
                 return $sftp;

@@ -1,6 +1,9 @@
 Revision history for Net::SFTP::Foreign
 
-1.52_09  Jun 17, 2009
+1.52_10  Jun 26, 2009
+	- work around for IPC::Open3 feature missing in old versions of
+          that module that caused password authentication to fail under
+          5.6.x perls (bug report by Vetrivel).
 	- find method would not follow links passed as arguements to
           the method or other found when ordered mode was selected
           (bug report by Paul Kolano)
