@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.52_10';
+our $VERSION = '1.52_11';
 
 use strict;
 use warnings;
@@ -458,10 +458,14 @@ sub new {
             $sftp->{pid} = $child;
             $sftp->{_expect} = $expect;
 
-            unless($expect->expect($eto, ":")) {
+            unless($expect->expect($eto, ':', '?')) {
                 $sftp->_conn_failed("$name not requested as expected", $expect->error);
                 return $sftp;
             }
+	    if ($expect->before =~ /^The authenticity of host/) {
+		$sftp->_conn_failed("The authenticity of the target host can not be established, connect from the command line first");
+		return $sftp;
+	    }
             $expect->send("$pass\n");
 	    $sftp->{_password_sent} = 1;
 
