@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.52_11';
+our $VERSION = '1.52_12';
 
 use strict;
 use warnings;
@@ -441,6 +441,7 @@ sub new {
 		    exit -1;
 		}
 		_ipc_open2_bug_workaround $this_pid;
+		$pty->close_slave();
 	    }
 	    else {
 		$expect = Expect->new;
@@ -462,8 +463,10 @@ sub new {
                 $sftp->_conn_failed("$name not requested as expected", $expect->error);
                 return $sftp;
             }
-	    if ($expect->before =~ /^The authenticity of host/) {
-		$sftp->_conn_failed("The authenticity of the target host can not be established, connect from the command line first");
+	    my $before = $expect->before;
+	    if ($before =~ /^The authenticity of host /i or
+		$before =~ /^Warning: the \w+ host key for /i) {
+		$sftp->_conn_failed("the authenticity of the target host can not be established, connect from the command line first");
 		return $sftp;
 	    }
             $expect->send("$pass\n");

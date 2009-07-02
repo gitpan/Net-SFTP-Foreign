@@ -1,7 +1,9 @@
 Revision history for Net::SFTP::Foreign
 
-1.52_11  Jul 1, 2009
-
+1.52_12  Jul 2, 2009
+	- also if using password authentication, detect when the
+          remote host key doesn't match the key stored in know_hosts
+          and abort the connection (bug report by Ryan Niebur).
 	- if using password authentication, detect when the target
           host key has not been accepted yet (bug report by Ryan
           Niebur)
