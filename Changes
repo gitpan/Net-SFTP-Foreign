@@ -1,5 +1,8 @@
 Revision history for Net::SFTP::Foreign
 
+1.53  Jul 6, 2009
+        - re-released as stable
+
 1.52_12  Jul 2, 2009
 	- also if using password authentication, detect when the
           remote host key doesn't match the key stored in know_hosts
@@ -25,7 +28,7 @@ Revision history for Net::SFTP::Foreign
         - add debug hexdumps for sysreads and syswrites
         - optimize some common ls usages to reduce CPU utilization
         - implement pipelining for ls command
-	- ls bug wanted was being called with the wrong arguments
+	- ls bug, wanted was being called with the wrong arguments
 	- add timestamps to debugging output
 	- ensure that attribute arguments are of class
           Net::SFTP::Foreign::Attributes (feature request by Todd
