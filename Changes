@@ -1,5 +1,10 @@
 Revision history for Net::SFTP::Foreign
 
+1.54_01  Jul 22, 2009
+        - Yet another "Password not requested as expected" bug solved,
+          $pty->close_slave was being called too soon (bug report by
+          Tim Rayner).
+
 1.53  Jul 6, 2009
         - re-released as stable
 

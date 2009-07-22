@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.53';
+our $VERSION = '1.54_01';
 
 use strict;
 use warnings;
@@ -441,7 +441,7 @@ sub new {
 		    exit -1;
 		}
 		_ipc_open2_bug_workaround $this_pid;
-		$pty->close_slave();
+		# $pty->close_slave();
 	    }
 	    else {
 		$expect = Expect->new;
@@ -469,6 +469,7 @@ sub new {
 		$sftp->_conn_failed("the authenticity of the target host can not be established, connect from the command line first");
 		return $sftp;
 	    }
+	    $expect->close_slave();
             $expect->send("$pass\n");
 	    $sftp->{_password_sent} = 1;
 
