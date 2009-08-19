@@ -21,7 +21,7 @@ plan skip_all => "tests not supported on inferior OS"
 plan skip_all => "sftp-server not found"
     unless defined $sscmd;
 
-plan tests => 717;
+plan tests => 722;
 
 use_ok('Net::SFTP::Foreign');
 use Net::SFTP::Foreign::Constants qw(:flags);
@@ -49,6 +49,12 @@ my $rcwd = $sftp->realpath($lcwd);
 ok (defined $rcwd, "realpath");
 
 my @data = <DATA>;
+
+ok ($sftp->setcwd("."), "setcwd");
+ok (!$sftp->setcwd("miauu"), "setcwd to non existant dir");
+ok ($sftp->stat("t/1_run.t"), "check that the file exists");
+ok (!$sftp->setcwd("t/1_run.t"), "setcwd to file");
+ok ($sftp->setcwd(), "setcwd reset");
 
 for my $setcwd (0, 1) {
     my $orcwd = $rcwd;

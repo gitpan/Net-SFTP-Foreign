@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:                Net-SFTP-Foreign
-version:             1.54_01
+version:             1.54_02
 abstract:            Secure File Transfer Protocol client
 license:             ~
 author:              

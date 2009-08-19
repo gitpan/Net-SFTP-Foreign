@@ -1,9 +1,17 @@
 Revision history for Net::SFTP::Foreign
 
+1.54_02  Aug 19, 2009
+	- add extra sanity check to setcwd method. It seems that some
+          servers do not report an error when realpath is called on an
+          inexistent file (bug report by Ben Szulc)
+	- password authentication broken in AIX
+        - some documentation corrections
+        - more tests added
+
 1.54_01  Jul 22, 2009
-        - Yet another "Password not requested as expected" bug solved,
+        - yet another "Password not requested as expected" bug solved,
           $pty->close_slave was being called too soon (bug report by
-          Tim Rayner).
+          Tim Rayner)
 
 1.53  Jul 6, 2009
         - re-released as stable

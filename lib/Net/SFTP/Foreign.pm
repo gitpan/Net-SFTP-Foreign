@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.54_01';
+our $VERSION = '1.54_02';
 
 use strict;
 use warnings;
@@ -469,7 +469,6 @@ sub new {
 		$sftp->_conn_failed("the authenticity of the target host can not be established, connect from the command line first");
 		return $sftp;
 	    }
-	    $expect->close_slave();
             $expect->send("$pass\n");
 	    $sftp->{_password_sent} = 1;
 
@@ -477,6 +476,7 @@ sub new {
                 $sftp->_conn_failed("$name interchange did not complete", $expect->error);
                 return $sftp;
             }
+	    $expect->close_slave();
         }
         else {
             _debug "ssh cmd: @open2_cmd\n" if ($debug and $debug & 1);
@@ -741,7 +741,6 @@ sub _check_status_ok {
     my ($sftp, $eid, $error, $errstr) = @_;
     if (my $msg = $sftp->_get_msg_and_check(SSH2_FXP_STATUS, $eid,
 					    $error, $errstr)) {
-	
 	my $status = $sftp->_set_status($msg->get_int32, $msg->get_str);
 	return 1 if $status == SSH2_FX_OK;
 
@@ -751,15 +750,23 @@ sub _check_status_ok {
 }
 
 sub setcwd {
-
-    @_ == 2 or croak 'Usage: $sftp->setcwd($path)';
+    @_ <= 2 or croak 'Usage: $sftp->setcwd($path)';
     ${^TAINT} and &_catch_tainted_args;
 
     my ($sftp, $cwd) = @_;
     if (defined $cwd) {
         $cwd = $sftp->realpath($cwd);
         return undef unless defined $cwd;
-        $sftp->{cwd} = $cwd;
+	my $a = $sftp->stat($cwd)
+	    or return undef;
+	if (S_ISDIR($a->perm)) {
+	    return $sftp->{cwd} = $cwd;
+	}
+	else {
+	    $sftp->_set_error(SFTP_ERR_REMOTE_BAD_OBJECT,
+			      "Remote object '$cwd' is not a directory");
+	    return undef;
+	}
     }
     else {
         delete $sftp->{cwd};
@@ -4616,7 +4623,7 @@ B<Q>: How can I know if a directory entry is a (directory|link|file|...)?
 
 B<A>: Use the C<S_IS*> functions from L<Fcntl>. For instance:
 
-  use Fcntl qw(IS_DIR);
+  use Fcntl qw(S_ISDIR);
   my $ls = $sftp->ls or die $sftp->error;
   for my $entry (@$ls) {
     if (S_ISDIR($entry->{a}->perm)) {
