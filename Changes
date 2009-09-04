@@ -1,5 +1,8 @@
 Revision history for Net::SFTP::Foreign
 
+1.54_03  Sep 4, 2009
+	- add debugging to _rel2abs
+
 1.54_02  Aug 19, 2009
 	- add extra sanity check to setcwd method. It seems that some
           servers do not report an error when realpath is called on an

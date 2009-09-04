@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.54_02';
+our $VERSION = '1.54_03';
 
 use strict;
 use warnings;
@@ -637,12 +637,14 @@ sub _check_extension {
 
 sub _rel2abs {
     my ($sftp, $path) = @_;
+    my $old = $path;
     my $cwd = $sftp->{cwd};
     if (defined $cwd and $path !~ m|^/|) {
         # carp "sftp->rel2abs($path) => $sftp->{cwd}/$path\n";
 	$path =~ s|^(?:\./+)+||;
-	return ($cwd =~ m|/$| ? "$cwd$path" : "$cwd/$path");
+	$path = ($cwd =~ m|/$| ? "$cwd$path" : "$cwd/$path");
     }
+    $debug and $debug & 4096 and _debug("_rel2abs: '$old' --> '$path'");
     return $path
 }
 
@@ -770,7 +772,7 @@ sub setcwd {
     }
     else {
         delete $sftp->{cwd};
-        return $sftp->cwd;
+        return $sftp->cwd if defined wantarray;
     }
 }
 
@@ -1504,8 +1506,8 @@ sub rename {
         $sftp->status != SSH2_FX_OP_UNSUPPORTED and return undef;
     }
 
-    # we are optimistic and try to rename it whitout testing if a file
-    # of the same name already exists
+    # we are optimistic here and try to rename it without testing if a
+    # file of the same name already exists first
     $sftp->_rename($old, $new) and return 1;
 
     if ($overwrite and $sftp->status == SSH2_FX_FAILURE) {
