@@ -1,5 +1,8 @@
 Revision history for Net::SFTP::Foreign
 
+1.55  Sep 9, 2009
+        - re-release as stable
+
 1.54_03  Sep 4, 2009
 	- add debugging to _rel2abs
 
