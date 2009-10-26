@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.55';
+our $VERSION = '1.56_01';
 
 use strict;
 use warnings;
@@ -376,8 +376,10 @@ sub new {
             }
             elsif ($ssh_cmd_interface eq 'ssh') {
                 push @open2_cmd, -p => $port if defined $port;
-		push @open2_cmd, -o => 'NumberOfPasswordPrompts=1'
-		    if $pass and !$passphrase;
+		if ($pass and !$passphrase) {
+		    push @open2_cmd, (-o => 'NumberOfPasswordPrompts=1',
+				      -o => 'PreferredAuthentications=password');
+		}
             }
             else {
                 die "Unsupported ssh_cmd_interface '$ssh_cmd_interface'";
@@ -541,8 +543,10 @@ sub disconnect {
 			  : $dirty_cleanup );
 
 	    if ($dirty or not defined $dirty) {
-
-		for my $sig (($dirty ? () : 0), 1, 1, 9, 9) {
+		require POSIX;
+		my $TERM = POSIX::SIGTERM();
+		my $KILL = POSIX::SIGKILL();
+		for my $sig (($dirty ? () : 0), $TERM, $TERM, $KILL, $KILL) {
 		    $sig and kill $sig, $pid;
 
 		    my $except;
@@ -4583,7 +4587,7 @@ L<PuTTY|http://the.earth.li/~sgtatham/putty/> SSH client. Very popular
 between MS Windows users, it is also available for Linux and other
 Unixes now.
 
-=item put method fails
+=item Put method fails
 
 B<Q>: put fails with the following error:
 
@@ -4604,7 +4608,7 @@ Send me a bug report containing a dump of your $sftp object so I
 can add code for your particular server software to activate the
 work-around automatically.
 
-=item disable password authentication completely
+=item Disable password authentication completely
 
 B<Q>: When we try to open a session and the key either doesn't exist
 or is invalid, the child SSH hangs waiting for a password to be
@@ -4619,7 +4623,7 @@ new method as follows:
 
 See L<ssh_config(5)> for the details.
 
-=item understanding C<$attr-E<gt>perm> bits
+=item Understanding C<$attr-E<gt>perm> bits
 
 B<Q>: How can I know if a directory entry is a (directory|link|file|...)?
 
@@ -4633,9 +4637,7 @@ B<A>: Use the C<S_IS*> functions from L<Fcntl>. For instance:
     }
   }
 
-
 =back
-
 
 =head1 BUGS
 
@@ -4696,14 +4698,12 @@ L<Net::OpenSSH>.
 Modules offering similar functionality available from CPAN are
 L<Net::SFTP> or L<Net::SSH2>.
 
-
 =head1 COMMERCIAL SUPPORT
 
 Commercial support, professional services and custom software
 development around this module are available through my current
 company. Drop me an email with a rough description of your
 requirements and we will get back to you ASAP.
-
 
 =head1 COPYRIGHT
 

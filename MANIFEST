@@ -12,7 +12,6 @@ lib/Net/SFTP/Foreign/Local.pm
 LICENSE
 Makefile.PL
 MANIFEST
-META.yml			Module meta-data (added by MakeMaker)
 README
 rfc/draft-ietf-secsh-filexfer-02.txt
 rfc/draft-ietf-secsh-filexfer-03.txt
@@ -31,3 +30,4 @@ t/data.txd
 t/data.txu
 t/Net-SFTP-Foreign-Compat.t
 TODO
+META.yml                                 Module meta-data (added by MakeMaker)
