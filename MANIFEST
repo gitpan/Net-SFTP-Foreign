@@ -9,6 +9,8 @@ lib/Net/SFTP/Foreign/Compat.pm
 lib/Net/SFTP/Foreign/Constants.pm
 lib/Net/SFTP/Foreign/Helpers.pm
 lib/Net/SFTP/Foreign/Local.pm
+lib/Net/SFTP/Foreign/Backend/Unix.pm
+lib/Net/SFTP/Foreign/Backend/Windows.pm
 LICENSE
 Makefile.PL
 MANIFEST
@@ -25,6 +27,7 @@ t/1_run.t
 t/2_pods.t
 t/3_convert.t
 t/4_perl5_11.t
+t/5_join.t
 t/common.pm
 t/data.txd
 t/data.txu
