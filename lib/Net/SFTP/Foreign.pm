@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.58_01';
+our $VERSION = '1.58_02';
 
 use strict;
 use warnings;
@@ -1452,7 +1452,7 @@ sub get {
 	    unless (defined $perm or $local_is_fh);
 
         if ($resume) {
-            if (CORE::open $fh, '>>', $local) {
+            if (CORE::open $fh, '>', $local) {
                 binmode $fh;
 		CORE::seek($fh, 0, 2);
                 $askoff = CORE::tell $fh;
@@ -1468,7 +1468,6 @@ sub get {
                                           "Couldn't resume transfer, local file is bigger than remote");
                         return undef;
                     }
-
                     $size == $askoff and return 1;
                 }
             }
@@ -1790,6 +1789,7 @@ sub put {
 	    }
 	    else {
 		$writeoff = $rattrs->size;
+		$debug and $debug & 16384 and _debug "resuming from $writeoff";
 	    }
 	}
 	elsif ($append) {
@@ -1808,6 +1808,7 @@ sub put {
                     my $len = length $converted_input;
                     my $delta = $writeoff - $off;
                     if ($delta <= $len) {
+                        $debug and $debug & 16384 and _debug "discarding $delta converted bytes";
                         substr $converted_input, 0, $delta, '';
                         last;
                     }
@@ -1840,6 +1841,7 @@ sub put {
 		while ($off) {
 		    my $read = CORE::read($fh, my($buf), ($off < 16384 ? $off : 16384));
 		    if ($read) {
+                        $debug and $debug & 16384 and _debug "discarding $read bytes";
 			$off -= $read;
 		    }
 		    else {
@@ -1926,6 +1928,7 @@ sub put {
                         }
                         $eof_t = 1;
                     }
+
                     # note that the $converter is called a last time
                     # with an empty string
                     $lsize += $converter->($input);
@@ -1938,10 +1941,19 @@ sub put {
                 $eof = 1 if ($eof_t and !$len);
             }
             else {
+                $debug and $debug & 16384 and
+                    _debug "reading block at offset ".CORE::tell($fh)." block_size: $block_size";
+
                 $len = CORE::read($fh, $data, $block_size);
+
                 if ($len) {
+		    $debug and $debug & 16384 and _debug "block read, size: $len";
+
 		    utf8::downgrade($data, 1)
-			    or croak "wide characters unexpectedly read from file";
+			or croak "wide characters unexpectedly read from file";
+
+		    $debug and $debug & 16384 and length $data != $len and
+			_debug "read data changed size on downgrade to " . length($data);
 		}
 		else {
                     unless (defined $len) {
@@ -1968,6 +1980,9 @@ sub put {
             }
 
             if ($len) {
+		$debug and $debug & 16384 and
+		    _debug "writing block at offset $writeoff, length " . length($data);
+
                 my $id = $sftp->_queue_new_msg(SSH2_FXP_WRITE, str => $rfid,
                                                int64 => $writeoff, str => $data);
                 push @msgid, $id;
@@ -4605,6 +4620,38 @@ B<A>: Use the C<S_IS*> functions from L<Fcntl>. For instance:
       print "$entry->{filename} is a directory\n";
     }
   }
+
+=item Host key checking
+
+B<Q>: Connecting to a remote server with password authentication fails
+with the following error:
+
+  The authenticity of the target host can not be established,
+  connect from the command line first
+
+B<A>: That probably means that the public key from the remote server
+is not stored in the C<~/.ssh/known_hosts> file. Run an SSH Connection
+from the command line as the same user as the script and answer C<yes>
+when asked to confirm the key suplied.
+
+Example:
+
+  $ ssh pluto /bin/true
+  The authenticity of host 'pluto (172.25.1.4)' can't be established.
+  RSA key fingerprint is 41:b1:a7:86:d2:a9:7b:b0:7f:a1:00:b7:26:51:76:52.
+  Are you sure you want to continue connecting (yes/no)? yes
+
+Your SSH client may also support some flag to disable this check, but
+doing it can ruin the security of the SSH protocol so I advise against
+its usage.
+
+Example:
+
+  # Warning: don't do that unless you fully understand
+  # its security implications!!!
+  $sftp = Net::SFTP::Foreign->new($host,
+                                  more => [-o => 'StrictHostKeyChecking no'],
+                                  ...);
 
 =back
 
