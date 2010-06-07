@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign::Backend::Unix;
 
-our $VERSION = '0.03';
+our $VERSION = '1.58_04';
 
 use strict;
 use warnings;
@@ -85,8 +85,8 @@ sub _init_transport {
         }
 
         my $expect_log_user = delete $opts->{expect_log_user} || 0;
-	my $stderr_fh = delete $opts->{stderr_fh};
-
+	my $stderr_discard = delete $opts->{stderr_discard};
+	my $stderr_fh = ($stderr_discard ? undef : delete $opts->{stderr_fh});
         my $open2_cmd = delete $opts->{open2_cmd};
 
 	my @open2_cmd;
@@ -144,6 +144,13 @@ sub _init_transport {
 	if (${^TAINT} and Scalar::Util::tainted($ENV{PATH})) {
             _tcroak('Insecure $ENV{PATH}')
         }
+
+	if ($stderr_discard) {
+	    unless (open $stderr_fh, '>', '/dev/null') {
+		$sftp->_conn_failed("Unable to redirect stderr to /dev/null");
+		return;
+	    }
+	}
 
         my $this_pid = $$;
 

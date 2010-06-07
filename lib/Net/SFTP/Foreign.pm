@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.58_03';
+our $VERSION = '1.58_04';
 
 use strict;
 use warnings;
@@ -1757,7 +1757,7 @@ sub put {
 	   ) {
 	    # $fh can point at some place inside the file, not just at the
 	    # begining
-	    if ($local_is_fh) {
+	    if ($local_is_fh and defined $lsize) {
 		my $tell = eval { CORE::tell $fh };
 		$lsize -= $tell if ($tell and $tell > 0);
 	    }
@@ -3304,6 +3304,10 @@ analysis:
       print "captured stderr: $_";
     }
   }
+
+=item stderr_discard =E<gt> 1
+
+redirects stderr to /dev/null
 
 =item block_size =E<gt> $default_block_size
 
