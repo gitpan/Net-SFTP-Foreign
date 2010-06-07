@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign::Backend::Unix;
 
-our $VERSION = '1.58_04';
+our $VERSION = '1.58_05';
 
 use strict;
 use warnings;
@@ -28,6 +28,16 @@ sub _init_transport_streams {
 	my $flags = fcntl($sftp->{$dir}, F_GETFL, 0);
 	fcntl($sftp->{$dir}, F_SETFL, $flags | O_NONBLOCK);
     }
+}
+
+sub _open_dev_null {
+    my $sftp = shift;
+    my $dev_null;
+    unless (open $dev_null, '>', "/dev/null") {
+	$sftp->_conn_failed("Unable to redirect stderr to /dev/null");
+	return;
+    }
+    $dev_null
 }
 
 sub _ipc_open2_bug_workaround {
@@ -146,10 +156,7 @@ sub _init_transport {
         }
 
 	if ($stderr_discard) {
-	    unless (open $stderr_fh, '>', '/dev/null') {
-		$sftp->_conn_failed("Unable to redirect stderr to /dev/null");
-		return;
-	    }
+	    $stderr_fh = $class->_open_dev_null($sftp) or return;
 	}
 
         my $this_pid = $$;
