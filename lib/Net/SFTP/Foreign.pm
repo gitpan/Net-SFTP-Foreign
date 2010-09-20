@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.59';
+our $VERSION = '1.60';
 
 use strict;
 use warnings;
@@ -29,7 +29,9 @@ BEGIN {
 # knowing anything about the Helpers package!
 our $debug;
 BEGIN { *Net::SFTP::Foreign::Helpers::debug = \$debug };
-use Net::SFTP::Foreign::Helpers qw(_is_reg _is_lnk _is_dir _debug _sort_entries _gen_wanted _gen_converter _hexdump);
+use Net::SFTP::Foreign::Helpers qw(_is_reg _is_lnk _is_dir _debug
+                                   _sort_entries _gen_wanted _gen_converter
+                                   _hexdump _ensure_list);
 use Net::SFTP::Foreign::Constants qw( :fxp :flags :att
 				      :status :error
 				      SSH2_FILEXFER_VERSION );

@@ -1,5 +1,9 @@
 Revision history for Net::SFTP::Foreign
 
+1.60  Sep 20, 2010
+        - _ensure_list was not being imported from Helpers (bug report
+          and solution by Jean-Benoît Baudens)
+
 1.59  Sep 16, 2010
 	- kill ssh subprocess with KILL signal on Windows
 
