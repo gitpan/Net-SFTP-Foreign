@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.61';
+our $VERSION = '1.62';
 
 use strict;
 use warnings;
@@ -31,7 +31,7 @@ our $debug;
 BEGIN { *Net::SFTP::Foreign::Helpers::debug = \$debug };
 use Net::SFTP::Foreign::Helpers qw(_is_reg _is_lnk _is_dir _debug
                                    _sort_entries _gen_wanted _gen_converter
-                                   _hexdump _ensure_list);
+                                   _hexdump _ensure_list _catch_tainted_args);
 use Net::SFTP::Foreign::Constants qw( :fxp :flags :att
 				      :status :error
 				      SSH2_FILEXFER_VERSION );
@@ -4745,11 +4745,13 @@ from the L<sftp(1)> and L<sftp-server(8)> manual pages.
 Net::SFTP::Foreign integrates nicely with my other module
 L<Net::OpenSSH>.
 
+L<Net::SFTP::Foreign::Backend::Net_SSH2> allows to run
+Net::SFTP::Foreign on top of L<Net::SSH2>.
+
 Modules offering similar functionality available from CPAN are
 L<Net::SFTP> and L<Net::SSH2>.
 
-L<Net::SFTP::Foreign::Backend::Net_SSH2> allows to run
-Net::SFTP::Foreign on top of L<Net::SSH2>.
+L<Test::SFTP> allows to run tests against a remote SFTP server.
 
 =head1 COPYRIGHT
 

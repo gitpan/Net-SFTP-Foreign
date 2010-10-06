@@ -1,5 +1,10 @@
 Revision history for Net::SFTP::Foreign
 
+
+1.62  Oct 5, 2010
+        - _catch_tainted_args was not being imported from helpers (bug
+          report by rfbits at PerlMonks)
+
 1.61  Sep 22, 2010
         - remove some dead code introducing unneded constraints that
           cause the Net::SSH2 backend to fail (bug report by Philippe
@@ -27,6 +32,8 @@ Revision history for Net::SFTP::Foreign
           available under Windows
 	- new FAQ about put failing because of forbidden setstat
 	- minor doc improvements
+        - use "kill $name" instead of using POSIX to get the signal
+          number
 
 1.58_05  Jun 7, 2010
 	- add support for stderr_discard also in Windows backend
