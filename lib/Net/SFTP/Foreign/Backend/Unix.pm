@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign::Backend::Unix;
 
-our $VERSION = '1.63_07';
+our $VERSION = '1.67';
 
 use strict;
 use warnings;
@@ -109,6 +109,8 @@ sub _init_transport {
             my $host = delete $opts->{host};
             defined $host or croak "sftp target host not defined";
 
+            my $key_path = delete $opts->{key_path};
+
             my $ssh_cmd = delete $opts->{ssh_cmd};
             $ssh_cmd = 'ssh' unless defined $ssh_cmd;
             @open2_cmd = ($ssh_cmd);
@@ -128,25 +130,39 @@ sub _init_transport {
                 if (defined $more and !ref($more) and $more =~ /^-\w\s+\S/);
             my @more = _ensure_list $more;
 
+            my @preferred_authentications;
+            if (defined $key_path) {
+                push @preferred_authentications, 'publickey' if defined $key_path;
+                push @open2_cmd, -i => $key_path;
+            }
+
             if ($ssh_cmd_interface eq 'plink') {
-                $pass and !$passphrase
-                    and croak "Password authentication via Expect is not supported for the plink client";
                 push @open2_cmd, -P => $port if defined $port;
+                if ($pass and !$passphrase) {
+                    warnings::warnif("Net::SFTP::Foreign", "using insecure password authentication with plink");
+                    push @open2_cmd, -pw => $pass;
+                    undef $pass;
+                }
+
             }
             elsif ($ssh_cmd_interface eq 'ssh') {
                 push @open2_cmd, -p => $port if defined $port;
 		if ($pass and !$passphrase) {
 		    push @open2_cmd, -o => 'NumberOfPasswordPrompts=1';
-                    push @open2_cmd, -o => 'PreferredAuthentications=keyboard-interactive,password'
-                        unless grep { $more[$_] eq '-o' and
-                                      $more[$_ + 1] =~ /^PreferredAuthentications\W/ } 0..$#more-1;
+                    push @preferred_authentications, ('keyboard-interactive', 'password');
 		}
+                if (@preferred_authentications
+                    and not grep { $more[$_] eq '-o' and
+                                       $more[$_ + 1] =~ /^PreferredAuthentications\W/ } 0..$#more-1) {
+                    push @open2_cmd, -o => 'PreferredAuthentications=' . join(',', @preferred_authentications);
+                }
             }
             elsif ($ssh_cmd_interface eq 'tectia') {
             }
             else {
                 die "Unsupported ssh_cmd_interface '$ssh_cmd_interface'";
             }
+
             push @open2_cmd, -l => $user if defined $user;
             push @open2_cmd, @more;
             push @open2_cmd, $host;
@@ -258,16 +274,20 @@ sub _init_transport {
                 $sftp->_conn_failed("Bad ssh command", $!);
                 return;
             }
-            # do not propagate signals sent from the terminal to the
-            # slave SSH:
-            eval {
-                setpgrp($sftp->{pid}, 0);
-            };
         }
     }
     $backend->_init_transport_streams($sftp);
 }
 
+sub _after_init {
+    my ($backend, $sftp) = @_;
+    unless ($sftp->error) {
+        # do not propagate signals sent from the terminal to the
+        # slave SSH:
+        local ($@, $!);
+        eval { setpgrp($sftp->{pid}, 0) };
+    }
+}
 
 sub _do_io {
     my (undef, $sftp, $timeout) = @_;

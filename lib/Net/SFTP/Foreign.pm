@@ -1,9 +1,11 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.66_01';
+our $VERSION = '1.67';
 
 use strict;
 use warnings;
+use warnings::register;
+
 use Carp qw(carp croak);
 
 use Symbol ();
@@ -184,6 +186,7 @@ sub new {
 
     my %defs = $backend->_defaults;
 
+    $sftp->{_autodie} = delete $opts{autodie};
     $sftp->{_block_size} = delete $opts{block_size} || $defs{block_size} || 32*1024;
     $sftp->{_queue_size} = delete $opts{queue_size} || $defs{queue_size} || 32;
     $sftp->{_read_ahead} = $defs{read_ahead} || $sftp->{_block_size} * 4;
@@ -210,6 +213,7 @@ sub new {
     %opts and _croak_bad_options(keys %opts);
 
     $sftp->_init unless $sftp->error;
+    $backend->_after_init($sftp);
     $sftp
 }
 
@@ -1540,73 +1544,83 @@ sub get {
     my $adjustment = 0;
     my $n = 0;
     local $\;
+    do {
+        # disable autodie here in order to do not leave unhandled
+        # responses queued on the connection in case of failure.
+        local $sftp->{_autodie};
 
-    while (1) {
-	# request a new block if queue is not full
-	while (!@msgid or (($size == -1 or $size > $askoff) and @msgid < $queue_size and $n != 1)) {
+        while (1) {
+            # request a new block if queue is not full
+            while (!@msgid or (($size == -1 or $size > $askoff) and @msgid < $queue_size and $n != 1)) {
 
-	    my $id = $sftp->_queue_new_msg(SSH2_FXP_READ, str=> $rfid,
-					   int64 => $askoff, int32 => $block_size);
-	    push @msgid, $id;
-	    push @askoff, $askoff;
-	    $askoff += $block_size;
-            $n++;
-	}
+                my $id = $sftp->_queue_new_msg(SSH2_FXP_READ, str=> $rfid,
+                                               int64 => $askoff, int32 => $block_size);
+                push @msgid, $id;
+                push @askoff, $askoff;
+                $askoff += $block_size;
+                $n++;
+            }
 
-	my $eid = shift @msgid;
-	my $roff = shift @askoff;
+            my $eid = shift @msgid;
+            my $roff = shift @askoff;
 
-	my $msg = $sftp->_get_msg_and_check(SSH2_FXP_DATA, $eid,
-					    SFTP_ERR_REMOTE_READ_FAILED,
-					    "Couldn't read from remote file");
+            my $msg = $sftp->_get_msg_and_check(SSH2_FXP_DATA, $eid,
+                                                SFTP_ERR_REMOTE_READ_FAILED,
+                                                "Couldn't read from remote file");
 
-	unless ($msg) {
-	    if ($sftp->{_status} == SSH2_FX_EOF) {
-		$sftp->_set_error();
-                $roff != $loff and next;
-	    }
-	    last;
-	}
-
-	my $data = $msg->get_str;
-	my $len = length $data;
-
-	if ($roff != $loff or !$len) {
-	    $sftp->_set_error(SFTP_ERR_REMOTE_BLOCK_TOO_SMALL,
-                              "remote packet received is too small" );
-	    last;
-	}
-
-	$loff += $len;
-        if ($len < $block_size) {
-          $block_size = $len < 2048 ? 2048 : $len;
-          $askoff = $loff;
-        }
-
-        my $adjustment_before = $adjustment;
-        $adjustment += $converter->($data) if $converter;
-
-        if (length($data) and defined $cb) {
-	    # $size = $loff if ($loff > $size and $size != -1);
-	    $cb->($sftp, $data,
-		  $lstart + $roff + $adjustment_before,
-		  $lstart + $size + $adjustment);
-
-            last if $sftp->error;
-	}
-
-        if (length($data) and !$dont_save) {
-            unless (print $fh $data) {
-                $sftp->_set_error(SFTP_ERR_LOCAL_WRITE_FAILED,
-                                  "unable to write data to local file $local", $!);
+            unless ($msg) {
+                if ($sftp->{_status} == SSH2_FX_EOF) {
+                    $sftp->_set_error();
+                    $roff != $loff and next;
+                }
                 last;
             }
+
+            my $data = $msg->get_str;
+            my $len = length $data;
+
+            if ($roff != $loff or !$len) {
+                $sftp->_set_error(SFTP_ERR_REMOTE_BLOCK_TOO_SMALL,
+                                  "remote packet received is too small" );
+                last;
+            }
+
+            $loff += $len;
+            if ($len < $block_size) {
+                $block_size = $len < 2048 ? 2048 : $len;
+                $askoff = $loff;
+            }
+
+            my $adjustment_before = $adjustment;
+            $adjustment += $converter->($data) if $converter;
+
+            if (length($data) and defined $cb) {
+                # $size = $loff if ($loff > $size and $size != -1);
+                $cb->($sftp, $data,
+                      $lstart + $roff + $adjustment_before,
+                      $lstart + $size + $adjustment);
+
+                last if $sftp->error;
+            }
+
+            if (length($data) and !$dont_save) {
+                unless (print $fh $data) {
+                    $sftp->_set_error(SFTP_ERR_LOCAL_WRITE_FAILED,
+                                      "unable to write data to local file $local", $!);
+                    last;
+                }
+            }
         }
-    }
+    };
 
     $sftp->_get_msg for (@msgid);
 
-    return undef if $sftp->error;
+    if ($sftp->error) {
+        # we are out of the pipeline loop, so we can now safely
+        # rethrow any error when autodie is on.
+        croak $sftp->error if $sftp->{_autodie};
+        return undef
+    }
 
     # if a converter is in place, and aditional call has to be
     # performed in order to flush any pending buffered data
@@ -1930,103 +1944,109 @@ sub put {
     # buffering introduced, we use $eof_t to account for that.
     my ($eof, $eof_t);
     my @msgid;
- OK: while (1) {
-        if (!$eof and @msgid < $queue_size) {
-            my ($data, $len);
-            if ($converter) {
-                while (!$eof_t and length $converted_input < $block_size) {
-                    my $read = CORE::read($fh, my $input, $block_size * 4);
-                    unless ($read) {
-                        unless (defined $read) {
+    do {
+        local $sftp->{_autodie};
+    OK: while (1) {
+            if (!$eof and @msgid < $queue_size) {
+                my ($data, $len);
+                if ($converter) {
+                    while (!$eof_t and length $converted_input < $block_size) {
+                        my $read = CORE::read($fh, my $input, $block_size * 4);
+                        unless ($read) {
+                            unless (defined $read) {
+                                $sftp->_set_error(SFTP_ERR_LOCAL_READ_ERROR,
+                                                  "Couldn't read from local file '$local'", $!);
+                                last OK;
+                            }
+                            $eof_t = 1;
+                        }
+
+                        # note that the $converter is called a last time
+                        # with an empty string
+                        $lsize += $converter->($input);
+                        utf8::downgrade($input, 1)
+                                or croak "converter introduced wide characters in data";
+                        $converted_input .= $input;
+                    }
+                    $data = substr($converted_input, 0, $block_size, '');
+                    $len = length $data;
+                    $eof = 1 if ($eof_t and !$len);
+                }
+                else {
+                    $debug and $debug & 16384 and
+                        _debug "reading block at offset ".CORE::tell($fh)." block_size: $block_size";
+
+                    $len = CORE::read($fh, $data, $block_size);
+
+                    if ($len) {
+                        $debug and $debug & 16384 and _debug "block read, size: $len";
+
+                        utf8::downgrade($data, 1)
+                                or croak "wide characters unexpectedly read from file";
+
+                        $debug and $debug & 16384 and length $data != $len and
+                            _debug "read data changed size on downgrade to " . length($data);
+                    }
+                    else {
+                        unless (defined $len) {
                             $sftp->_set_error(SFTP_ERR_LOCAL_READ_ERROR,
                                               "Couldn't read from local file '$local'", $!);
                             last OK;
                         }
-                        $eof_t = 1;
+                        $eof = 1;
                     }
-
-                    # note that the $converter is called a last time
-                    # with an empty string
-                    $lsize += $converter->($input);
-                    utf8::downgrade($input, 1)
-			    or croak "converter introduced wide characters in data";
-                    $converted_input .= $input;
                 }
-                $data = substr($converted_input, 0, $block_size, '');
-                $len = length $data;
-                $eof = 1 if ($eof_t and !$len);
-            }
-            else {
-                $debug and $debug & 16384 and
-                    _debug "reading block at offset ".CORE::tell($fh)." block_size: $block_size";
 
-                $len = CORE::read($fh, $data, $block_size);
+                my $nextoff = $writeoff + $len;
+
+                if (defined $cb) {
+                    $lsize = $nextoff if $nextoff > $lsize;
+                    $cb->($sftp, $data, $writeoff, $lsize);
+
+                    last OK if $sftp->error;
+
+                    utf8::downgrade($data, 1) or croak "callback introduced wide characters in data";
+
+                    $len = length $data;
+                    $nextoff = $writeoff + $len;
+                }
 
                 if ($len) {
-		    $debug and $debug & 16384 and _debug "block read, size: $len";
+                    $debug and $debug & 16384 and
+                        _debug "writing block at offset $writeoff, length " . length($data);
 
-		    utf8::downgrade($data, 1)
-			or croak "wide characters unexpectedly read from file";
-
-		    $debug and $debug & 16384 and length $data != $len and
-			_debug "read data changed size on downgrade to " . length($data);
-		}
-		else {
-                    unless (defined $len) {
-                        $sftp->_set_error(SFTP_ERR_LOCAL_READ_ERROR,
-                                          "Couldn't read from local file '$local'", $!);
-                        last OK;
-                    }
-                    $eof = 1;
+                    my $id = $sftp->_queue_new_msg(SSH2_FXP_WRITE, str => $rfid,
+                                                   int64 => $writeoff, str => $data);
+                    push @msgid, $id;
+                    $writeoff = $nextoff;
                 }
             }
 
-            my $nextoff = $writeoff + $len;
+            last if ($eof and !@msgid);
 
-            if (defined $cb) {
-                $lsize = $nextoff if $nextoff > $lsize;
-                $cb->($sftp, $data, $writeoff, $lsize);
+            next unless  ($eof
+                          or @msgid >= $queue_size
+                          or $sftp->_do_io(0));
 
-                last OK if $sftp->error;
-
-                utf8::downgrade($data, 1) or croak "callback introduced wide characters in data";
-
-                $len = length $data;
-                $nextoff = $writeoff + $len;
-            }
-
-            if ($len) {
-		$debug and $debug & 16384 and
-		    _debug "writing block at offset $writeoff, length " . length($data);
-
-                my $id = $sftp->_queue_new_msg(SSH2_FXP_WRITE, str => $rfid,
-                                               int64 => $writeoff, str => $data);
-                push @msgid, $id;
-                $writeoff = $nextoff;
+            my $id = shift @msgid;
+            unless ($sftp->_check_status_ok($id,
+                                            SFTP_ERR_REMOTE_WRITE_FAILED,
+                                            "Couldn't write to remote file")) {
+                last OK;
             }
         }
 
-        last if ($eof and !@msgid);
+        CORE::close $fh unless $local_is_fh;
 
-        next unless  ($eof
-                      or @msgid >= $queue_size
-                      or $sftp->_do_io(0));
+        $sftp->_get_msg for (@msgid);
 
-        my $id = shift @msgid;
-        unless ($sftp->_check_status_ok($id,
-                                        SFTP_ERR_REMOTE_WRITE_FAILED,
-                                        "Couldn't write to remote file")) {
-            last OK;
-        }
+        $sftp->_close_save_status($rfh);
+    };
+
+    if ($sftp->error) {
+        croak $sftp->error if $sftp->{_autodie};
+        return undef;
     }
-
-    CORE::close $fh unless $local_is_fh;
-
-    $sftp->_get_msg for (@msgid);
-
-    $sftp->_close_save_status($rfh);
-
-    return undef if $sftp->error;
 
     # for servers that does not support setting permissions on open files
     if (defined $perm and $late_set_perm) {
@@ -2091,74 +2111,74 @@ sub ls {
     my @dir;
     my @msgid;
 
+    do {
+        local $sftp->{_autodie};
     OK: while (1) {
-	push @msgid, $sftp->_queue_str_request(SSH2_FXP_READDIR, $rdid)
-	    while (@msgid < $queue_size);
+            push @msgid, $sftp->_queue_str_request(SSH2_FXP_READDIR, $rdid)
+                while (@msgid < $queue_size);
 
-	my $id = shift @msgid;
-	if (my $msg = $sftp->_get_msg_and_check(SSH2_FXP_NAME, $id,
-						SFTP_ERR_REMOTE_READDIR_FAILED,
-						"Couldn't read directory '$dir'" )) {
+            my $id = shift @msgid;
+            if (my $msg = $sftp->_get_msg_and_check(SSH2_FXP_NAME, $id,
+                                                    SFTP_ERR_REMOTE_READDIR_FAILED,
+                                                    "Couldn't read directory '$dir'" )) {
+                my $count = $msg->get_int32 or last;
 
-	    my $count = $msg->get_int32 or last;
+                if ($cheap) {
+                    for (1..$count) {
+                        my $fn = $sftp->_fs_decode($msg->get_str);
+                        push @dir, $fn if (!defined $cheap_wanted or $fn =~ $cheap_wanted);
+                        $msg->skip_str;
+                        Net::SFTP::Foreign::Attributes->skip_from_buffer($msg);
+                    }
+                }
+                else {
+                    for (1..$count) {
+                        my $fn = $sftp->_fs_decode($msg->get_str);
+                        my $ln = $sftp->_fs_decode($msg->get_str);
+                        # my $a = $msg->get_attributes;
+                        my $a = Net::SFTP::Foreign::Attributes->new_from_buffer($msg);
 
-	    if ($cheap) {
-		for (1..$count) {
-		    my $fn = $sftp->_fs_decode($msg->get_str);
-		    push @dir, $fn if (!defined $cheap_wanted or $fn =~ $cheap_wanted);
-		    $msg->skip_str;
-		    Net::SFTP::Foreign::Attributes->skip_from_buffer($msg);
-		}
-	    }
-	    else {
-		for (1..$count) {
-		    my $fn = $sftp->_fs_decode($msg->get_str);
-		    my $ln = $sftp->_fs_decode($msg->get_str);
-		    # my $a = $msg->get_attributes;
-		    my $a = Net::SFTP::Foreign::Attributes->new_from_buffer($msg);
+                        my $entry =  { filename => $fn,
+                                       longname => $ln,
+                                       a => $a };
 
-		    my $entry =  { filename => $fn,
-				   longname => $ln,
-				   a => $a };
+                        if ($follow_links and _is_lnk($a->perm)) {
 
-		    if ($follow_links and _is_lnk($a->perm)) {
+                            if ($a = $sftp->stat($sftp->join($dir, $fn))) {
+                                $entry->{a} = $a;
+                            }
+                            else {
+                                $sftp->_clear_error_and_status;
+                            }
+                        }
 
-			if ($a = $sftp->stat($sftp->join($dir, $fn))) {
-			    $entry->{a} = $a;
-			}
-			else {
-			    $sftp->_clear_error_and_status;
-			}
-		    }
+                        if ($realpath) {
+                            my $rp = $sftp->realpath($sftp->join($dir, $fn));
+                            if (defined $rp) {
+                                $fn = $entry->{realpath} = $rp;
+                            }
+                            else {
+                                $sftp->_clear_error_and_status;
+                            }
+                        }
 
-		    if ($realpath) {
-			my $rp = $sftp->realpath($sftp->join($dir, $fn));
-			if (defined $rp) {
-			    $fn = $entry->{realpath} = $rp;
-			}
-			else {
-			    $sftp->_clear_error_and_status;
-			}
-		    }
+                        if (!$wanted or $delayed_wanted or $wanted->($sftp, $entry)) {
+                            push @dir, (($names_only and !$delayed_wanted) ? $fn : $entry);
+                        }
+                    }
+                }
 
-		    if (!$wanted or $delayed_wanted or $wanted->($sftp, $entry)) {
-			push @dir, (($names_only and !$delayed_wanted) ? $fn : $entry);
-		    }
-		}
-	    }
-
-	    $queue_size ++ if $queue_size < $max_queue_size;
-	}
-	else {
-	    $sftp->_set_error if $sftp->{_status} == SSH2_FX_EOF;
-	    $sftp->_get_msg for @msgid;
-	    last;
-	}
-    }
-
-    $sftp->_closedir_save_status($rdh) if $rdh;
-
-    unless ($sftp->{_error}) {
+                $queue_size ++ if $queue_size < $max_queue_size;
+            }
+            else {
+                $sftp->_set_error if $sftp->{_status} == SSH2_FX_EOF;
+                $sftp->_get_msg for @msgid;
+                last;
+            }
+        }
+        $sftp->_closedir_save_status($rdh) if $rdh;
+    };
+    unless ($sftp->error) {
 	if ($delayed_wanted) {
 	    @dir = grep { $wanted->($sftp, $_) } @dir;
 	    @dir = map { defined $_->{realpath}
@@ -2176,6 +2196,7 @@ sub ls {
         }
 	return \@dir;
     }
+    croak $sftp->error if $sftp->{_autodie};
     return undef;
 }
 
@@ -2186,6 +2207,7 @@ sub rremove {
     my ($sftp, $dirs, %opts) = @_;
 
     my $on_error = delete $opts{on_error};
+    local $sftp->{_autodie} if $on_error;
     my $wanted = _gen_wanted( delete $opts{wanted},
 			      delete $opts{no_wanted});
 
@@ -2336,6 +2358,7 @@ sub rget {
     my $overwrite = delete $opts{overwrite};
     my $newer_only = delete $opts{newer_only};
     my $on_error = delete $opts{on_error};
+    local $sftp->{_autodie} if $on_error;
     my $ignore_links = delete $opts{ignore_links};
     my $conversion = delete $opts{conversion};
     my $resume = delete $opts{resume};
@@ -2476,6 +2499,7 @@ sub rput {
     my $numbered = delete $opts{numbered};
     my $newer_only = delete $opts{newer_only};
     my $on_error = delete $opts{on_error};
+    local $sftp->{_autodie} if $on_error;
     my $ignore_links = delete $opts{ignore_links};
     my $conversion = delete $opts{conversion};
     my $resume = delete $opts{resume};
@@ -2627,6 +2651,7 @@ sub mget {
     my %opts = @_;
 
     my $on_error = $opts{on_error};
+    local $sftp->{_autodie} if $on_error;
     my $ignore_links = delete $opts{ignore_links};
 
     my %glob_opts = (map { $_ => delete $opts{$_} }
@@ -2682,6 +2707,7 @@ sub mput {
     my %opts = @_;
 
     my $on_error = $opts{on_error};
+    local $sftp->{_autodie} if $on_error;
     my $ignore_links = delete $opts{ignore_links};
 
     my %glob_opts = (map { $_ => delete $opts{$_} }
@@ -2699,7 +2725,7 @@ sub mput {
     require Net::SFTP::Foreign::Local;
     my $lfs = Net::SFTP::Foreign::Local->new;
     my @local = map $lfs->glob($_, %glob_opts), _ensure_list $local;
-    
+
     my $count = 0;
     require File::Spec;
     for my $e (@local) {
@@ -2713,7 +2739,7 @@ sub mput {
 	    my $remote = (File::Spec->splitpath($fn))[2];
 	    $remote = $sftp->join($remotedir, $remote)
 		if defined $remotedir;
-	    
+
 	    if (_is_lnk($perm)) {
 		next if $ignore_links;
 		$sftp->put_symlink($fn, $remote, %put_symlink_opts);
@@ -3135,12 +3161,41 @@ Later versions of Net::SFTP::Foreign can use L<Net::SSH2> as the
 transport layer via the backend module
 L<Net::SFTP::Foreign::Backend::Net_SSH2>.
 
-=head2 Usage
+=head2 Error handling
 
 Most of the methods available from this package return undef on
 failure and a true value or the requested data on
-success. C<$sftp-E<gt>error> can be used to check for errors
-explicitly after every method call.
+success. C<$sftp-E<gt>error> should be used to check for errors
+explicitly after every method call. For instance:
+
+  $sftp = Net::SFTP::Foreign->new($host);
+  $sftp->error and die "unable to connect to remote host: " . $sftp->error;
+
+Also, the L</die_on_error> method provides a handy shortcut for the last line:
+
+  $sftp = Net::SFTP::Foreign->new($host);
+  $sftp->die_on_error("unable to connect to remote host");
+
+Alternatively, the C<autodie> mode that makes the module die when any
+error is found can be activated from the constructor. For instance:
+
+  $sftp = Net::SFTP::Foreign->new($host, autodie => 1);
+  my $ls = $sftp->ls("/bar");
+  # dies as: "Couldn't open remote dir '/bar': No such file"
+
+The C<autodie> mode will be disabled when an C<on_error> handler is
+passed to methods accepting it:
+
+  my $sftp = Net::SFTP::Foreign->new($host, autodie => 1);
+  # prints "foo!" and does not die:
+  $sftp->find("/sdfjkalshfl", # nonexistent directory
+              on_error => sub { print "foo!\n" });
+  # dies:
+  $sftp->find("/sdfjkalshfl");
+
+=head2 API
+
+The methods available from this module are described below.
 
 Don't forget to read also the FAQ and BUGS sections at the end of this
 document!
@@ -3160,7 +3215,7 @@ constructor call:
   my $sftp = Net::SFTP::Foreign->new(...);
   $sftp->die_on_error("SSH connection failed");
 
-C<%args> can contain:
+The optional arguments accepted are as follows:
 
 =over 4
 
@@ -3192,8 +3247,8 @@ to an array of arguments. For instance:
 
   more => '-v'         # right
   more => ['-v']       # right
-  more => "-i $key"    # wrong!!!
-  more => [-i => $key] # right
+  more => "-c $cipher"    # wrong!!!
+  more => [-c => $cipher] # right
 
 =item ssh_cmd_interface =E<gt> 'plink' or 'ssh' or 'tectia'
 
@@ -3233,6 +3288,10 @@ Note that this option will not affect file contents in any way.
 
 This feature is not supported in perl 5.6 due to incomplete Unicode
 support in the interpreter.
+
+=item key_path =E<gt> $filename
+
+asks C<ssh> to use the key in the given file for authentication.
 
 =item password =E<gt> $password
 
@@ -3402,6 +3461,11 @@ addition to the default I<pipe-to-ssh-process>.
 Custom backends may change the set of options supported by the C<new>
 method.
 
+=item autodie => $bool
+
+Enables the autodie mode that will cause the module to die when any
+error is found (a la L<autodie>).
+
 =back
 
 =item $sftp-E<gt>error
@@ -3524,7 +3588,7 @@ will copy the remote file as "data.txt" the first time and as
 =item conversion =E<gt> $conversion
 
 on the fly data conversion of the file contents can be performed with
-this option. See L</On the fly data conversion> bellow.
+this option. See L</On the fly data conversion> below.
 
 =item callback =E<gt> $callback
 
@@ -3649,7 +3713,7 @@ the remote file is newer than the local one.
 =item conversion =E<gt> $conversion
 
 on the fly data conversion of the file contents can be performed with
-this option. See L</On the fly data conversion> bellow.
+this option. See L</On the fly data conversion> below.
 
 =item callback =E<gt> $callback
 
@@ -4622,6 +4686,12 @@ on the array:
   my $sftp = Net::SFTP::Foreign->new($host,
                                       more => [qw(-i /home/foo/.ssh/id_dsa)]);
 
+Note also that latest versions of Net::SFTP::Foreign support the
+C<key_path> argument:
+
+  my $sftp = Net::SFTP::Foreign->new($host,
+                                      key_path => '/home/foo/.ssh/id_dsa');
+
 =item Plink and password authentication
 
 B<Q>: Why password authentication is not supported for the plink SSH
@@ -4629,15 +4699,17 @@ client?
 
 B<A>: A bug in plink breaks it.
 
-As a work around, you can use plink C<-pw> argument to pass the
-password on the command line, but it is B<highly insecure>, anyone
-with a shell account on the local machine would be able to get the
-password. Use at your own risk!:
+Newer versions of Net::SFTP::Foreign pass the password to C<plink>
+using its C<-pw> option. As this feature is not completely secure a
+warning is generated.
 
-  # HIGHLY INSECURE!!!
+It can be silenced (though, don't do it without understanding why it
+is there, please!) as follows:
+
+  no warnings 'Net::SFTP::Foreign';
   my $sftp = Net::SFTP::Foreign->new('foo@bar',
                                      ssh_cmd => 'plink',
-                                     more => [-pw => $password]);
+                                     password => $password);
   $sftp->die_on_error;
 
 =item Plink
@@ -4787,9 +4859,9 @@ Also, the following features should be considered experimental:
 
 - multi-backend support
 
-- mput and mget methods
-
 - numbered feature
+
+- autodie mode
 
 =head1 SUPPORT
 
@@ -4831,6 +4903,8 @@ Modules offering similar functionality available from CPAN are
 L<Net::SFTP> and L<Net::SSH2>.
 
 L<Test::SFTP> allows to run tests against a remote SFTP server.
+
+L<autodie>.
 
 =head1 COPYRIGHT
 
