@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.68_05';
+our $VERSION = '1.68_06';
 
 use strict;
 use warnings;
@@ -48,7 +48,7 @@ our $dirty_cleanup;
 my $windows;
 
 BEGIN {
-    $windows = $^O =~ /Win32/;
+    $windows = $^O =~ /Win(?:32|64)/;
 
     if ($^O =~ /solaris/i) {
 	$dirty_cleanup = 1 unless defined $dirty_cleanup;
@@ -5025,7 +5025,7 @@ These are the currently known bugs:
 
 =item - Doesn't work on VMS:
 
-The problem is related to L<IPC::Open2> not working on VMS. Patches
+The problem is related to L<IPC::Open3> not working on VMS. Patches
 are welcome!
 
 =item - Dirty cleanup:
@@ -5047,15 +5047,20 @@ SSH_FXP_SYMLINK command that seems to be the de facto standard. When
 interacting with SFTP servers that follow the SFTP specification, the
 C<symlink> method will interpret its arguments in reverse order.
 
+=item - IPC::Open3 bugs on Windows
+
+On Windows the IPC::Open3 module is used to spawn the slave SSH
+process. That module has several nasty bugs (related to STDIN, STDOUT
+and STDERR being closed or not being assigned to file descriptors 0, 1
+and 2 respectively) that will cause the connection to fail.
+
+Specifically this is known to happen under mod_perl/mod_perl2.
+
 =back
 
 Also, the following features should be considered experimental:
 
 - support for Tectia server
-
-- redirecting SSH stderr stream
-
-- multi-backend support
 
 - numbered feature
 
@@ -5095,7 +5100,8 @@ Net::SFTP::Foreign integrates nicely with my other module
 L<Net::OpenSSH>.
 
 L<Net::SFTP::Foreign::Backend::Net_SSH2> allows to run
-Net::SFTP::Foreign on top of L<Net::SSH2>.
+Net::SFTP::Foreign on top of L<Net::SSH2> (nowadays, this combination
+is probably the best option under Windows).
 
 Modules offering similar functionality available from CPAN are
 L<Net::SFTP> and L<Net::SSH2>.

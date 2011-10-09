@@ -1,5 +1,11 @@
 Revision history for Net::SFTP::Foreign
 
+1.68_06  Oct 9, 2011
+        - do not use the buggy IPC::Open3 under Unix/Linux. This is a
+          mayor internal change, please report any connection problems
+          that were not happening with previous versions of the module
+        - allow testing Windows backend under Unix
+
 1.68_05  Sep 27, 2011
         - this version is more picky about incomplete responses to
           stat requests when copy_perms or copy_time are enabled
