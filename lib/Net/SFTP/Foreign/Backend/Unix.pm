@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign::Backend::Unix;
 
-our $VERSION = '1.70_02';
+our $VERSION = '1.70_03';
 
 use strict;
 use warnings;
@@ -326,7 +326,7 @@ sub _init_transport {
 
 sub _after_init {
     my ($backend, $sftp) = @_;
-    unless ($sftp->error) {
+    if ($sftp->{pid} and not $sftp->error) {
         # do not propagate signals sent from the terminal to the
         # slave SSH:
         local ($@, $!);
