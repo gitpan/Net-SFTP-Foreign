@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign::Backend::Unix;
 
-our $VERSION = '1.70_03';
+our $VERSION = '1.70_08';
 
 use strict;
 use warnings;
@@ -18,7 +18,7 @@ use Time::HiRes qw(sleep time);
 sub _new { shift }
 
 sub _defaults {
-   ( default_queue_size => 32 )
+   ( queue_size => 32 )
 }
 
 sub _init_transport_streams {
