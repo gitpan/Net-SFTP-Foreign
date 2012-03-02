@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.70_08';
+our $VERSION = '1.70_09';
 
 use strict;
 use warnings;
@@ -1444,10 +1444,7 @@ sub get {
     }
 
     my $neg_umask;
-    if (defined $perm) {
-	$neg_umask = $perm;
-    }
-    else {
+    unless (defined $perm) {
 	$umask = umask unless defined $umask;
 	$neg_umask = 0777 & ~$umask;
     }
@@ -1477,7 +1474,7 @@ sub get {
 
     if ($copy_perm) {
         if (defined $rperm) {
-            $perm = $rperm;
+            $perm = $rperm & $neg_umask;
         }
         elsif ($best_effort) {
             undef $copy_perm
@@ -1526,8 +1523,6 @@ sub get {
             $debug and $debug & 128 and _debug("temporal local file name: $local");
         }
 
-        $perm = (0666 & $neg_umask) unless defined $perm or $local_is_fh;
-
         if ($resume) {
             if (CORE::open $fh, '+<', $local) {
                 binmode $fh;
@@ -1566,14 +1561,11 @@ sub get {
                 my $flags = Fcntl::O_CREAT|Fcntl::O_WRONLY;
                 $flags |= Fcntl::O_APPEND if $append;
                 $flags |= Fcntl::O_EXCL if ($numbered or (!$overwrite and !$append));
-
-                my $lumask = ~$perm & 0777;
-
-                unlink $local if ($overwrite and !$numbered);
-
+                unlink $local if $overwrite;
                 while (1) {
-                    my $save = _umask_save_and_set $lumask;
-                    sysopen ($fh, $local, $flags, $perm) and last;
+                    my $open_perm = (defined $perm ? $perm : $neg_umask & 0666);
+                    my $save = _umask_save_and_set(~$open_perm & 0777);
+                    sysopen ($fh, $local, $flags, $open_perm) and last;
                     unless ($numbered and -e $local) {
                         $sftp->_set_error(SFTP_ERR_LOCAL_OPEN_FAILED,
                                           "Can't open $local", $!);
@@ -1588,13 +1580,17 @@ sub get {
 	}
 
 	if (defined $perm) {
-	    local ($@, $SIG{__DIE__}, $SIG{__WARN__});
-	    my $e = eval { chmod($perm & $neg_umask, $local) };
-	    if ($@ or $e <= 0) {
-                my $err = $!;
-                unlink $local;
+            my $error;
+	    do {
+                local ($@, $SIG{__DIE__}, $SIG{__WARN__});
+                unless (eval { chmod($perm & $neg_umask, $local) > 0 }) {
+                    $error = ($@ ? $@ : $!);
+                }
+            };
+	    if ($error and !$best_effort) {
+                unlink $local unless $resume or $append;
 		$sftp->_set_error(SFTP_ERR_LOCAL_CHMOD_FAILED,
-				  "Can't chmod $local", ($@ ? $@ : $err));
+				  "Can't chmod $local", $error);
 		return undef
 	    }
 	}
@@ -1739,61 +1735,59 @@ sub get {
                     goto CLEANUP;
                 }
             }
-        }
 
-        if ($atomic) {
-            if (!$overwrite) {
-                while (1) {
-                    # performing a non-overwriting atomic rename is
-                    # quite burdensome: first, link is tried, if that
-                    # fails, non-overwriting is favoured over
-                    # atomicity and an empty file is used to lock the
-                    # path before atempting an overwriting rename.
-                    if (link $local, $atomic_local) {
-                        unlink $local;
-                        last;
-                    }
-                    my $err = $!;
-                    unless (-e $atomic_local) {
-                        if (sysopen my $lock, $atomic_local,
-                            Fcntl::O_CREAT|Fcntl::O_EXCL|Fcntl::O_WRONLY,
-                            0600) {
-                            $atomic_cleanup = 1;
-                            goto OVERWRITE;
+            if ($atomic) {
+                if (!$overwrite) {
+                    while (1) {
+                        # performing a non-overwriting atomic rename is
+                        # quite burdensome: first, link is tried, if that
+                        # fails, non-overwriting is favoured over
+                        # atomicity and an empty file is used to lock the
+                        # path before atempting an overwriting rename.
+                        if (link $local, $atomic_local) {
+                            unlink $local;
+                            last;
                         }
-                        $err = $!;
+                        my $err = $!;
                         unless (-e $atomic_local) {
-                            $sftp->_set_error(SFTP_ERR_LOCAL_OPEN_FAILED,
-                                              "Can't open $local", $err);
+                            if (sysopen my $lock, $atomic_local,
+                                Fcntl::O_CREAT|Fcntl::O_EXCL|Fcntl::O_WRONLY,
+                                0600) {
+                                $atomic_cleanup = 1;
+                                goto OVERWRITE;
+                            }
+                            $err = $!;
+                            unless (-e $atomic_local) {
+                                $sftp->_set_error(SFTP_ERR_LOCAL_OPEN_FAILED,
+                                                  "Can't open $local", $err);
+                                goto CLEANUP;
+                            }
+                        }
+                        unless ($numbered) {
+                            $sftp->_set_error(SFTP_ERR_LOCAL_ALREADY_EXISTS,
+                                              "local file $atomic_local already exists");
                             goto CLEANUP;
                         }
+                        _inc_numbered($atomic_local);
                     }
-                    unless ($numbered) {
-                        $sftp->_set_error(SFTP_ERR_LOCAL_ALREADY_EXISTS,
-                                          "local file $atomic_local already exists");
+                }
+                else {
+                OVERWRITE:
+                    unless (CORE::rename $local, $atomic_local) {
+                        $sftp->_set_error(SFTP_ERR_LOCAL_RENAME_FAILED,
+                                          "Unable to rename temporal file to its final position '$atomic_local'", $!);
                         goto CLEANUP;
                     }
-                    _inc_numbered($atomic_local);
                 }
+                $$atomic_numbered = $local if ref $atomic_numbered;
             }
-            else {
-            OVERWRITE:
-                unless (CORE::rename $local, $atomic_local) {
-                    $sftp->_set_error(SFTP_ERR_LOCAL_RENAME_FAILED,
-                                      "Unable to rename temporal file to its final position '$atomic_local'", $!);
 
-                    goto CLEANUP;
-                }
+        CLEANUP:
+            if ($cleanup and $sftp->{_error}) {
+                unlink $local;
+                unlink $atomic_local if $atomic_cleanup;
             }
-            $$atomic_numbered = $local if ref $atomic_numbered;
         }
-
-    CLEANUP:
-        if ($cleanup and $sftp->{_error}) {
-            unlink $local;
-            unlink $atomic_local if $atomic_cleanup;
-        }
-
     }; # autodie flag is restored here!
 
     $sftp->_ok_or_autodie;
@@ -1906,11 +1900,13 @@ sub put {
 		CORE::stat $fh;
 	    }
 	   ) {
+            $debug and $debug & 16384 and _debug "local file size is " . (defined $lsize ? $lsize : '<undef>');
+
 	    # $fh can point at some place inside the file, not just at the
 	    # begining
 	    if ($local_is_fh and defined $lsize) {
 		my $tell = eval { CORE::tell $fh };
-		$lsize -= $tell if ($tell and $tell > 0);
+		$lsize -= $tell if $tell and $tell > 0;
 	    }
 	}
 	elsif ($copy_perm or $copy_time) {
@@ -1932,9 +1928,13 @@ sub put {
     my $writeoff = 0;
     my $converter = _gen_converter $conversion;
     my $converted_input = '';
+    my $rattrs;
 
     if ($resume or $append) {
-	my $rattrs = $sftp->stat($remote);
+	$rattrs = do {
+            local $sftp->{_autodie};
+            $sftp->stat($remote);
+        };
 	if ($rattrs) {
 	    if ($resume and $resume eq 'auto' and $rattrs->mtime >= $lmtime) {
                 $debug and $debug & 16384 and
@@ -1946,12 +1946,21 @@ sub put {
 		$debug and $debug & 16384 and _debug "resuming from $writeoff";
 	    }
 	}
-	elsif ($append) {
-	    return undef unless $sftp->{_status} == SSH2_FX_NO_SUCH_FILE;
-	    undef $append;
-	}
+        else {
+            if ($append) {
+                $sftp->{_status} == SSH2_FX_NO_SUCH_FILE
+                    or $sftp->_ok_or_autodie or return undef;
+                # no such file, no append
+                undef $append;
+            }
+            $sftp->_clear_error_and_status;
+        }
+    }
 
-	if ($resume and $writeoff) {
+    my ($atomic_numbered, $atomic_remote);
+    if ($writeoff) {
+        # one of $resume or $append is set
+        if ($resume) {
             $debug and $debug & 16384 and _debug "resuming file transfer from $writeoff";
             if ($converter) {
                 # as size could change, we have to read and convert
@@ -1982,32 +1991,32 @@ sub put {
                         }
                         $lsize += $converter->($converted_input) if defined $lsize;
                         utf8::downgrade($converted_input, 1)
-				or croak "converter introduced wide characters in data";
+                                or croak "converter introduced wide characters in data";
                         $read or $eof_t = 1;
                     }
                 }
             }
-	    elsif ($local_is_fh) {
-		# as some PerlIO layer could be installed on the $fh,
-		# just seeking to the resume position will not be
-		# enough. We have to read and discard data until the
-		# desired offset is reached
-		my $off = $writeoff;
-		while ($off) {
-		    my $read = CORE::read($fh, my($buf), ($off < 16384 ? $off : 16384));
-		    if ($read) {
+            elsif ($local_is_fh) {
+                # as some PerlIO layer could be installed on the $fh,
+                # just seeking to the resume position will not be
+                # enough. We have to read and discard data until the
+                # desired offset is reached
+                my $off = $writeoff;
+                while ($off) {
+                    my $read = CORE::read($fh, my($buf), ($off < 16384 ? $off : 16384));
+                    if ($read) {
                         $debug and $debug & 16384 and _debug "discarding $read bytes";
-			$off -= $read;
-		    }
-		    else {
-			$sftp->_set_error(defined $read
-					  ? ( SFTP_ERR_REMOTE_BIGGER_THAN_LOCAL,
-					      "Couldn't resume transfer, remote file is bigger than local")
-					  : ( SFTP_ERR_LOCAL_READ_ERROR,
-					      "Couldn't read from local file handler '$local' to the resume point $writeoff", $!));
-		    }
-		}
-	    }
+                        $off -= $read;
+                    }
+                    else {
+                        $sftp->_set_error(defined $read
+                                          ? ( SFTP_ERR_REMOTE_BIGGER_THAN_LOCAL,
+                                              "Couldn't resume transfer, remote file is bigger than local")
+                                          : ( SFTP_ERR_LOCAL_READ_ERROR,
+                                              "Couldn't read from local file handler '$local' to the resume point $writeoff", $!));
+                    }
+                }
+            }
             else {
                 if (defined $lsize and $writeoff > $lsize) {
                     $sftp->_set_error(SFTP_ERR_REMOTE_BIGGER_THAN_LOCAL,
@@ -2022,18 +2031,16 @@ sub put {
             }
             if (defined $lsize and $writeoff == $lsize) {
                 if (defined $perm and $rattrs->perm != $perm) {
+                    # FIXME: do copy_time here if required
                     return $sftp->_best_effort($best_effort, setstat => $remote, $attrs);
                 }
                 return 1;
             }
-            $rfh = $sftp->open($remote, SSH2_FXF_WRITE)
-                or return undef;
         }
+        $rfh = $sftp->open($remote, SSH2_FXF_WRITE)
+            or return undef;
     }
-
-    my ($atomic_numbered, $atomic_remote);
-
-    unless (defined $rfh) {
+    else {
         if ($atomic) {
             # check that does not exist a file of the same name that
             # would block the rename operation at the end
@@ -2050,9 +2057,9 @@ sub put {
             $numbered = 1;
             $debug and $debug & 128 and _debug("temporal remote file name: $remote");
         }
+        local $sftp->{_autodie};
 	if ($numbered) {
             while (1) {
-                local $sftp->{_autodie};
                 $rfh = $sftp->open($remote,
                                    SSH2_FXF_WRITE | SSH2_FXF_CREAT | SSH2_FXF_EXCL,
                                    $attrs);
@@ -2069,10 +2076,9 @@ sub put {
             # first we try to open the remote file and if it fails due
             # to a permissions error then we remove it and try again.
             for my $rep (0, 1) {
-                local $sftp->{_autodie};
                 $rfh = $sftp->open($remote,
                                    SSH2_FXF_WRITE | SSH2_FXF_CREAT |
-                                   ($append ? 0 : ($overwrite ? SSH2_FXF_TRUNC : SSH2_FXF_EXCL)),
+                                   ($overwrite ? SSH2_FXF_TRUNC : SSH2_FXF_EXCL),
                                    $attrs);
 
                 last if $rfh or $rep or !$overwrite or $sftp->{_status} != SSH2_FX_PERMISSION_DENIED;
@@ -2738,10 +2744,10 @@ sub rput {
 		    # print "descend: $e->{filename}\n";
 		    if (!$wanted or $wanted->($lfs, $e)) {
 			my $fn = $e->{filename};
-			$debug and $debug and 32768 and _debug "rput handling $fn";
+			$debug and $debug & 32768 and _debug "rput handling $fn";
 			if ($fn =~ $relocal) {
 			    my $rpath = $sftp->join($remote, File::Spec->splitdir($1));
-			    $debug and $debug and 32768 and _debug "rpath: $rpath";
+			    $debug and $debug & 32768 and _debug "rpath: $rpath";
 			    if ($sftp->test_d($rpath)) {
 				$lfs->_set_error(SFTP_ERR_REMOTE_ALREADY_EXISTS,
 						 "Remote directory '$rpath' already exists");
@@ -2774,7 +2780,7 @@ sub rput {
 		    unless (_is_dir($e->{a}->perm)) {
 			if (!$wanted or $wanted->($lfs, $e)) {
 			    my $fn = $e->{filename};
-			    $debug and $debug and 32768 and _debug "rput handling $fn";
+			    $debug and $debug & 32768 and _debug "rput handling $fn";
 			    if ($fn =~ $relocal) {
 				my (undef, $d, $f) = File::Spec->splitpath($1);
 				my $rpath = $sftp->join($remote, File::Spec->splitdir($d), $f);
@@ -3214,11 +3220,10 @@ sub OPEN {
 }
 
 sub DESTROY {
+    local ($@, $!, $?);
     my $self = shift;
     my $sftp = $self->_sftp;
-
-    $debug and $debug & 4 and Net::SFTP::Foreign::_debug("$self->DESTROY called (sftp: ".($sftp||'').")");
-
+    $debug and $debug & 4 and Net::SFTP::Foreign::_debug("$self->DESTROY called (sftp: ".($sftp||'<undef>').")");
     if ($self->_check and $sftp) {
         local $sftp->{_autodie};
 	$sftp->_close_save_status($self)
@@ -3255,6 +3260,7 @@ sub OPENDIR {
 *SEEKDIR = $gen_not_supported->();
 
 sub DESTROY {
+    local ($@, $!, $?);
     my $self = shift;
     my $sftp = $self->_sftp;
 

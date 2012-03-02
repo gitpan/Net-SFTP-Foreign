@@ -20,4 +20,4 @@ no_index:
 requires:
   Scalar::Util: 0
   Test::More: 0
-version: 1.70_08
+version: 1.70_09
