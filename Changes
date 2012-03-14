@@ -1,5 +1,9 @@
 Revision history for Net::SFTP::Foreign
 
+1.71  Mar 14, 2012
+        - release as stable
+        - add support for vendor-id extension
+
 1.70_10  Mar 2, 2012
         - now perm and umask can be used together on get method calls
         - more cleanups for permission handling code on get method
