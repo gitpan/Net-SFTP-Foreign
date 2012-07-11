@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.74_01';
+our $VERSION = '1.74_02';
 
 use strict;
 use warnings;
@@ -349,7 +349,18 @@ sub _init {
                                                  Encode::decode(utf8 => $vid->get_str),
                                                  $vid->get_int64 ];
                 }
-
+                elsif ($key eq 'supported2') {
+                    my $s2 = Net::SFTP::Foreign::Buffer->make("$value");
+                    $sftp->{_ext__supported2} = [ $s2->get_int32,
+                                                  $s2->get_int32,
+                                                  $s2->get_int32,
+                                                  $s2->get_int32,
+                                                  $s2->get_int32,
+                                                  $s2->get_int16,
+                                                  $s2->get_int16,
+                                                  [map Encode::decode(utf8 => $_), $s2->get_str_list],
+                                                  [map Encode::decode(utf8 => $_), $s2->get_str_list] ];
+                }
             }
 
 	    return $version;
@@ -1639,6 +1650,9 @@ sub get {
     my $adjustment = 0;
     my $n = 0;
     local $\;
+
+    my $slow_start = ($size == -1 ? $queue_size - 1 : 0);
+
     do {
         # Disable autodie here in order to do not leave unhandled
         # responses queued on the connection in case of failure.
@@ -1649,8 +1663,9 @@ sub get {
 
         while (1) {
             # request a new block if queue is not full
-            while (!@msgid or (($size == -1 or $size > $askoff) and @msgid < $queue_size and $n != 1)) {
-
+            while (!@msgid or ( ($size == -1 or $size > $askoff)   and
+                                @msgid < $queue_size - $slow_start and
+                                $n != 1 ) ) {
                 my $id = $sftp->_queue_new_msg(SSH2_FXP_READ, str=> $rfid,
                                                int64 => $askoff, int32 => $block_size);
                 push @msgid, $id;
@@ -1658,6 +1673,8 @@ sub get {
                 $askoff += $block_size;
                 $n++;
             }
+
+            $slow_start-- if $slow_start;
 
             my $eid = shift @msgid;
             my $roff = shift @askoff;
@@ -2679,7 +2696,7 @@ sub rget {
                                  ($lpath) = $lpath =~ /(.*)/ if ${^TAINT};
 				 if (_is_lnk($e->{a}->perm) and !$ignore_links) {
 				     if ($sftp->get_symlink($fn, $lpath,
-							    copy_time => $copy_time,
+							    # copy_time => $copy_time,
                                                             %get_symlink_opts)) {
 					 $count++;
 					 return undef;
