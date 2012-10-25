@@ -20,4 +20,7 @@ no_index:
 requires:
   Scalar::Util: 0
   Test::More: 0
-version: 1.74_03
+resources:
+  bugtracker: https://rt.cpan.org/Public/Dist/Display.html?Name=Net-SFTP-Foreign
+  repository: http://github.com/salva/p5-Net-SFTP-Foreign
+version: 1.74_04

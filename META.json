@@ -38,5 +38,13 @@
       }
    },
    "release_status" : "testing",
-   "version" : "1.74_03"
+   "resources" : {
+      "bugtracker" : {
+         "web" : "https://rt.cpan.org/Public/Dist/Display.html?Name=Net-SFTP-Foreign"
+      },
+      "repository" : {
+         "url" : "http://github.com/salva/p5-Net-SFTP-Foreign"
+      }
+   },
+   "version" : "1.74_04"
 }
