@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.74_04';
+our $VERSION = '1.74_05';
 
 use strict;
 use warnings;
@@ -169,11 +169,13 @@ sub new {
     unshift @_, 'host' if @_ & 1;
     my %opts = @_;
 
-    my $sftp = { _msg_id => 0,
-		 _bout => '',
-		 _bin => '',
+    my $sftp = { _msg_id    => 0,
+		 _bout      => '',
+		 _bin       => '',
 		 _connected => 1,
-		 _queued => 0 };
+		 _queued    => 0,
+                 _error     => 0,
+                 _status    => 0 };
 
     bless $sftp, $class;
 
@@ -5304,7 +5306,7 @@ L<autodie>.
 
 =head1 COPYRIGHT
 
-Copyright (c) 2005-2012 Salvador FandiE<ntilde>o (sfandino@yahoo.com).
+Copyright (c) 2005-2013 Salvador FandiE<ntilde>o (sfandino@yahoo.com).
 
 Copyright (c) 2001 Benjamin Trott, Copyright (c) 2003 David Rolsky.
 

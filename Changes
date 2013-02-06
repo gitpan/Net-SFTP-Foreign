@@ -1,10 +1,14 @@
 Revision history for Net::SFTP::Foreign
 
+1.74_05  Feb 5, 2013
+        - error was not being set on timeouts (bug report by Kqfh
+          Jjgrn)
+
 1.74_04  Oct 25, 2012
         - overwriting rename of a file over itself was broken (bug
           report by Mike Wilder)
         - stat and lstat path arguments is now optional and defaults
-          to '.' (bug report by Paul Colano)
+          to '.' (bug report by Paul Kolano)
         - fstat was broken
         - add git repository and bugtracker into meta files
 
