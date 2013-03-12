@@ -1,6 +1,6 @@
 package Net::SFTP::Foreign;
 
-our $VERSION = '1.74_05';
+our $VERSION = '1.74_06';
 
 use strict;
 use warnings;
@@ -260,7 +260,7 @@ sub autodisconnect {
 
 sub disconnect {
     my $sftp = shift;
-    my $pid = $sftp->{pid};
+    my $pid = delete $sftp->{pid};
 
     $debug and $debug & 4 and _debug("$sftp->disconnect called (ssh pid: ".($pid||'').")");
 
@@ -273,6 +273,7 @@ sub disconnect {
         if ($windows) {
 	    kill KILL => $pid
                 and waitpid($pid, 0);
+            $debug and $debug & 4 and _debug "process $pid reaped";
         }
         else {
 	    my $dirty = ( defined $sftp->{_dirty_cleanup}
@@ -280,25 +281,25 @@ sub disconnect {
 			  : $dirty_cleanup );
 
 	    if ($dirty or not defined $dirty) {
+                $debug and $debug & 4 and _debug("starting dirty cleanup of process $pid");
 		for my $sig (($dirty ? () : 0), qw(TERM TERM KILL KILL)) {
+                    $debug and $debug & 4 and _debug("killing process $pid with signal $sig");
 		    $sig and kill $sig, $pid;
 
-		    my $except;
-		    {
-			local ($@, $SIG{__DIE__}, $SIG{__WARN__});
-			eval {
-			    local $SIG{ALRM} = sub { die "timeout\n" };
-			    alarm 8;
-			    waitpid($pid, 0);
-			    alarm 0;
-			};
-			$except = $@;
-		    }
-		    if ($except) {
-			next if $except =~ /^timeout/;
-			die $except;
-		    }
-		    last;
+                    local ($@, $SIG{__DIE__}, $SIG{__WARN__});
+                    my $wpr;
+                    eval {
+                        local $SIG{ALRM} = sub { die "timeout\n" };
+                        alarm 8;
+                        $wpr = waitpid($pid, 0);
+                        alarm 0;
+                    };
+                    $debug and $debug & 4 and _debug("waitpid returned " . (defined $wpr ? $wpr : '<undef>'));
+                    if ($wpr) {
+                        # $wpr > 0 ==> the process has ben reaped
+                        # $wpr < 0 ==> some error happened, retry unless ECHILD
+                        last if $wpr > 0 or $! == Errno::ECHILD();
+                    }
 		}
 	    }
 	    else {
@@ -311,6 +312,7 @@ sub disconnect {
 		    }
 		}
 	    }
+            $debug and $debug & 4 and _debug "process $pid reaped";
         }
     }
     1
