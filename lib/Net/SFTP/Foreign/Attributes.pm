@@ -209,6 +209,13 @@ sub append_extended {
     }
 }
 
+sub clone {
+    my $self = shift;
+    my $clone = { %$self };
+    bless $clone, ref $self;
+    $clone;
+}
+
 1;
 __END__
 
@@ -280,7 +287,7 @@ returned value with the L<Fcntl> module.
 For instance, the following code checks if some attributes object
 corresponds to a directory:
 
-  use Fctnl qw(S_ISDIR);
+  use Fcntl qw(S_ISDIR);
   ...
   if (S_ISDIR($attr->perm)) {
     # it is a directory!
