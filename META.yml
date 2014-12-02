@@ -3,25 +3,25 @@ abstract: 'Secure File Transfer Protocol client'
 author:
   - 'Salvador Fandino <sfandino@yahoo.com>'
 build_requires:
-  ExtUtils::MakeMaker: '0'
+  ExtUtils::MakeMaker: 0
 configure_requires:
-  ExtUtils::MakeMaker: '0'
+  ExtUtils::MakeMaker: 0
 dynamic_config: 1
-generated_by: 'ExtUtils::MakeMaker version 6.98, CPAN::Meta::Converter version 2.142060'
+generated_by: 'ExtUtils::MakeMaker version 6.66, CPAN::Meta::Converter version 2.120921'
 license: unknown
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.4.html
-  version: '1.4'
+  version: 1.4
 name: Net-SFTP-Foreign
 no_index:
   directory:
     - t
     - inc
 requires:
-  Scalar::Util: '0'
-  Test::More: '0'
-  Time::HiRes: '0'
+  Scalar::Util: 0
+  Test::More: 0
+  Time::HiRes: 0
 resources:
   bugtracker: https://rt.cpan.org/Public/Dist/Display.html?Name=Net-SFTP-Foreign
   repository: http://github.com/salva/p5-Net-SFTP-Foreign
-version: 1.78_02
+version: 1.78_03

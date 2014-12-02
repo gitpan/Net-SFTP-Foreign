@@ -4,7 +4,7 @@
       "Salvador Fandino <sfandino@yahoo.com>"
    ],
    "dynamic_config" : 1,
-   "generated_by" : "ExtUtils::MakeMaker version 6.98, CPAN::Meta::Converter version 2.142060",
+   "generated_by" : "ExtUtils::MakeMaker version 6.66, CPAN::Meta::Converter version 2.120921",
    "license" : [
       "unknown"
    ],
@@ -47,5 +47,5 @@
          "url" : "http://github.com/salva/p5-Net-SFTP-Foreign"
       }
    },
-   "version" : "1.78_02"
+   "version" : "1.78_03"
 }
